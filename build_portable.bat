@@ -37,6 +37,7 @@ pyinstaller ^
     --console ^
     --name "豆包喵喵" ^
     --icon "6-phone-cat_icon-icons.com_76682.ico" ^
+    --hidden-import pynput ^
     --clean ^
     server.py
 

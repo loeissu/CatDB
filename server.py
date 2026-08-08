@@ -8,12 +8,21 @@ import asyncio
 import socket
 import json
 import platform
+import sys
 import threading
 import time
 from aiohttp import web
 import aiohttp
 import pyautogui
 import pyperclip
+import subprocess
+
+# 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 
 # 剪贴板操作锁
 clipboard_lock = threading.Lock()
@@ -66,7 +75,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             height: 100vh;
             display: flex;
             flex-direction: column;
-            padding: 12px 14px;
+            padding: 12px 14px 66px;
             overflow: hidden;
         }
 
@@ -281,7 +290,6 @@ HTML_PAGE = '''<!DOCTYPE html>
             text-align: right; padding: 5px 16px 0; font-size: 12px; color: #BCAAA4;
             display: flex; justify-content: space-between;
         }
-        .footer-credit { text-align: center; font-size: 11px; color: #D7CCC8; margin-top: 8px; }
 
         /* 弹窗通用 */
         .modal-overlay {
@@ -300,6 +308,66 @@ HTML_PAGE = '''<!DOCTYPE html>
         .setting-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; font-size: 16px; }
         .setting-input { width: 70px; padding: 6px; border: 2px solid #EFEBE9; border-radius: 8px; text-align: center; font-family: inherit; font-size: 16px; color: var(--text-main); }
         .modal-btn { width: 100%; padding: 10px; background: var(--accent-orange); color: #fff; border: none; border-radius: 12px; font-family: inherit; font-size: 16px; margin-top: 10px; }
+        /* 弹窗内容过长时可滚动 */
+        .modal { max-height: 88vh; overflow-y: auto; }
+
+        /* === 底部自定义快捷键栏 === */
+        .hotkey-bar {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            display: flex; align-items: center; gap: 8px;
+            background: rgba(255, 249, 240, 0.92);
+            border-top: 2px solid #EFEBE9;
+            padding: 8px 10px; z-index: 500;
+            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+        }
+        .hotkey-scroll {
+            flex: 1; min-width: 0;
+            display: flex; align-items: center; gap: 8px;
+            overflow-x: auto; white-space: nowrap;
+            scrollbar-width: none; -ms-overflow-style: none;
+        }
+        .hotkey-scroll::-webkit-scrollbar { display: none; }
+        .hotkey-chip {
+            flex-shrink: 0;
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 8px 14px; border-radius: 20px;
+            background: #fff; border: 2px solid #EFEBE9;
+            box-shadow: 0 3px 0 #D7CCC8;
+            font-family: inherit; font-size: 15px; color: var(--text-main);
+            cursor: pointer; transition: all 0.1s;
+        }
+        .hotkey-chip:active { transform: translateY(3px); box-shadow: none; }
+        .hotkey-add {
+            flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
+            background: var(--accent-orange); color: #fff; border: none;
+            font-size: 20px; line-height: 1; cursor: pointer;
+            box-shadow: 0 3px 0 #EF6C00; transition: all 0.1s;
+        }
+        .hotkey-add:active { transform: translateY(3px); box-shadow: none; }
+
+        /* 设置弹窗快捷键管理区 */
+        .hk-section { margin-top: 20px; border-top: 2px dashed #FBE9E7; padding-top: 12px; }
+        .hk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 15px; }
+        .hk-add-btn {
+            background: var(--accent-orange); color: #fff; border: none;
+            border-radius: 14px; padding: 5px 12px; font-family: inherit; font-size: 13px; cursor: pointer;
+            box-shadow: 0 2px 0 #EF6C00;
+        }
+        .hk-add-btn:active { transform: translateY(2px); box-shadow: none; }
+        .hk-item {
+            display: flex; align-items: center; gap: 8px;
+            background: #FFF9F0; border: 2px solid #FBE9E7; border-radius: 12px;
+            padding: 8px 10px; margin-bottom: 8px;
+        }
+        .hk-item-icon { font-size: 18px; }
+        .hk-item-info { flex: 1; min-width: 0; }
+        .hk-item-name { font-size: 14px; }
+        .hk-item-desc { font-size: 11px; color: var(--text-light); }
+        .hk-item-btn { border: none; background: transparent; font-size: 14px; cursor: pointer; padding: 4px 6px; border-radius: 8px; color: var(--text-light); }
+        .hk-item-btn.del { color: #E57373; }
+        .hk-item-btn:active { background: #FBE9E7; }
+        .setting-input-wide { flex: 1; min-width: 0; padding: 6px 8px; border: 2px solid #EFEBE9; border-radius: 8px; font-family: inherit; font-size: 15px; color: var(--text-main); background: #fff; }
+        .hk-empty { text-align: center; font-size: 12px; color: #BCAAA4; padding: 8px 0; }
     </style>
 </head>
 <body>
@@ -354,7 +422,11 @@ HTML_PAGE = '''<!DOCTYPE html>
         </div>
     </div>
 
-    <div class="footer-credit">Claude和Gemini共同制作的豆包输入法同步程序</div>
+    <!-- 底部自定义快捷键栏 -->
+    <div class="hotkey-bar">
+        <div class="hotkey-scroll" id="hotkeyScroll"></div>
+        <button class="hotkey-add" id="hotkeyAddBtn">＋</button>
+    </div>
 
     <!-- 弹窗部分 -->
     <div class="modal-overlay" id="settingsModal">
@@ -371,6 +443,13 @@ HTML_PAGE = '''<!DOCTYPE html>
             <div class="setting-row">
                 <span>检测电脑键盘</span>
                 <input type="checkbox" id="detectKeyboard" style="width:20px; height:20px;" checked>
+            </div>
+            <div class="hk-section">
+                <div class="hk-header">
+                    <span>⚡ 自定义快捷键</span>
+                    <button class="hk-add-btn" id="hkAddBtn">＋ 添加</button>
+                </div>
+                <div id="hkList"><div class="hk-empty">暂无快捷键</div></div>
             </div>
             <button class="modal-btn" onclick="closeModal('settingsModal')">保存设置</button>
         </div>
@@ -389,6 +468,43 @@ HTML_PAGE = '''<!DOCTYPE html>
                 </li>
             </ul>
             <button class="modal-btn" onclick="closeModal('helpModal')">明白啦</button>
+        </div>
+    </div>
+
+    <!-- 快捷键编辑弹窗 -->
+    <div class="modal-overlay" id="editHotkeyModal">
+        <div class="modal">
+            <h3 style="text-align:center; margin-bottom:20px;" id="hkModalTitle">添加快捷键</h3>
+            <div class="setting-row">
+                <span>名称</span>
+                <input type="text" class="setting-input-wide" id="hkName" placeholder="如：复制">
+            </div>
+            <div class="setting-row">
+                <span>类型</span>
+                <select id="hkType" class="setting-input-wide">
+                    <option value="keys">按键组合</option>
+                    <option value="action">内置动作</option>
+                    <option value="script">启动脚本</option>
+                </select>
+            </div>
+            <div class="setting-row" id="hkKeysRow">
+                <span>按键</span>
+                <input type="text" class="setting-input-wide" id="hkKeys" placeholder="如 ctrl+c">
+            </div>
+            <div class="setting-row" id="hkActionRow" style="display:none;">
+                <span>动作</span>
+                <select class="setting-input-wide" id="hkAction">
+                    <option value="enter">回车</option>
+                    <option value="clear">清空</option>
+                    <option value="rebase">触发续写</option>
+                </select>
+            </div>
+            <div class="setting-row" id="hkScriptRow" style="display:none;">
+                <span>脚本</span>
+                <input type="text" class="setting-input-wide" id="hkCmd" placeholder="如 notepad.exe">
+            </div>
+            <button class="modal-btn" id="hkSaveBtn">保存</button>
+            <button class="modal-btn" style="background:#D7CCC8; box-shadow:0 4px 0 #BCAAA4;" onclick="closeModal('editHotkeyModal')">取消</button>
         </div>
     </div>
 
@@ -512,6 +628,159 @@ HTML_PAGE = '''<!DOCTYPE html>
             }
         });
 
+        // ============ 自定义快捷键模块 ============
+        const DEFAULT_HOTKEYS = [
+            { id: 'hk1', name: '回车', icon: '⏎', type: 'action', action: 'enter' },
+            { id: 'hk2', name: 'Esc', icon: '⎋', type: 'keys', keys: 'esc' },
+            { id: 'hk3', name: '切换窗口', icon: '🔄', type: 'keys', keys: 'alt+tab' },
+            { id: 'hk4', name: '全选', icon: '🔲', type: 'keys', keys: 'ctrl+a' },
+            { id: 'hk5', name: '删除', icon: '🗑️', type: 'keys', keys: 'delete' },
+            { id: 'hk6', name: '复制', icon: '📋', type: 'keys', keys: 'ctrl+c' },
+            { id: 'hk7', name: '粘贴', icon: '📌', type: 'keys', keys: 'ctrl+v' },
+        ];
+        const hotkeyScroll = document.getElementById('hotkeyScroll');
+        const hotkeyListEl = document.getElementById('hkList');
+        const hotkeyBarEl = document.querySelector('.hotkey-bar');
+
+        // 软键盘弹出时，将底部快捷键栏顶到输入法上方。
+        // 平台差异：Android 浏览器(Chrome/Edge/默认浏览器)会自动把 fixed bottom 元素
+        // 顶到键盘上方；只有 iOS Safari 会把 fixed 元素压在键盘下，需要手动顶起。
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        function syncHotkeyBarPosition() {
+            if (!window.visualViewport) return;
+            const vv = window.visualViewport;
+            if (isIOS && vv.height < window.innerHeight) {
+                // iOS：键盘弹出时固定元素被压住，将 bottom 设为键盘高度顶到输入法上方
+                const kbdHeight = window.innerHeight - vv.height - vv.offsetTop;
+                hotkeyBarEl.style.bottom = Math.max(kbdHeight, 0) + 'px';
+            } else {
+                // Android/无键盘：fixed 元素已自动跟随可视区域，保持贴底
+                hotkeyBarEl.style.bottom = '0px';
+            }
+        }
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', syncHotkeyBarPosition);
+            window.visualViewport.addEventListener('scroll', syncHotkeyBarPosition);
+        }
+
+        const HOTKEYS_VERSION = '4'; // 默认快捷键列表变更时递增，用于自动覆盖旧版默认数据
+        function loadHotkeys() {
+            const raw = localStorage.getItem('hotkeys');
+            const ver = localStorage.getItem('hotkeys_version');
+            if (!raw || ver !== HOTKEYS_VERSION) {
+                localStorage.setItem('hotkeys', JSON.stringify(DEFAULT_HOTKEYS));
+                localStorage.setItem('hotkeys_version', HOTKEYS_VERSION);
+                return DEFAULT_HOTKEYS.slice();
+            }
+            try { return JSON.parse(raw); } catch (e) { return DEFAULT_HOTKEYS.slice(); }
+        }
+        function saveHotkeys(list) {
+            localStorage.setItem('hotkeys', JSON.stringify(list));
+            localStorage.setItem('hotkeys_version', HOTKEYS_VERSION);
+        }
+
+        // 生成快捷键说明文案（用于设置列表展示）
+        function hkDesc(item) {
+            if (item.type === 'keys') return item.keys || '';
+            if (item.type === 'action') return '动作:' + (item.action || '');
+            return '脚本:' + (item.cmd || '');
+        }
+
+        // 渲染底部悬浮快捷键栏
+        function renderHotkeys() {
+            const list = loadHotkeys();
+            hotkeyScroll.innerHTML = '';
+            list.forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'hotkey-chip';
+                btn.innerHTML = `${item.icon || ''} ${item.name}`;
+                btn.onclick = () => onHotkeyClick(item);
+                hotkeyScroll.appendChild(btn);
+            });
+            renderHotkeyList(list);
+        }
+
+        // 点击快捷键：发送到电脑端执行
+        function onHotkeyClick(item) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) { alert('未连接到电脑，请先连接'); return; }
+            ws.send(JSON.stringify({ type: 'shortcut', sc: item }));
+            // 收起键盘，让用户看到电脑端执行效果后继续输入
+            input.blur();
+            requestAnimationFrame(() => requestAnimationFrame(() => input.focus()));
+        }
+
+        // 渲染设置弹窗内的快捷键列表
+        function renderHotkeyList(list) {
+            if (!list.length) { hotkeyListEl.innerHTML = '<div class="hk-empty">暂无快捷键，点击右上角添加</div>'; return; }
+            hotkeyListEl.innerHTML = '';
+            list.forEach((item, idx) => {
+                const row = document.createElement('div');
+                row.className = 'hk-item';
+                row.innerHTML = `
+                    <span class="hk-item-icon">${item.icon || '🔘'}</span>
+                    <div class="hk-item-info">
+                        <div class="hk-item-name">${item.name}</div>
+                        <div class="hk-item-desc">${hkDesc(item)}</div>
+                    </div>
+                    <button class="hk-item-btn" data-act="edit">✏️</button>
+                    <button class="hk-item-btn del" data-act="del">🗑️</button>
+                `;
+                row.querySelector('[data-act="edit"]').onclick = () => openHkEditor(item);
+                row.querySelector('[data-act="del"]').onclick = () => {
+                    list.splice(idx, 1);
+                    saveHotkeys(list);
+                    renderHotkeys();
+                };
+                hotkeyListEl.appendChild(row);
+            });
+        }
+
+        // ===== 添加快捷键弹窗逻辑 =====
+        let editingHkId = null;
+        function openHkEditor(item) {
+            editingHkId = item ? item.id : null;
+            document.getElementById('hkModalTitle').textContent = item ? '编辑快捷键' : '添加快捷键';
+            document.getElementById('hkName').value = item ? (item.name || '') : '';
+            document.getElementById('hkType').value = item ? item.type : 'keys';
+            document.getElementById('hkKeys').value = item && item.keys ? item.keys : '';
+            document.getElementById('hkAction').value = item && item.action ? item.action : 'enter';
+            document.getElementById('hkCmd').value = item && item.cmd ? item.cmd : '';
+            syncHkRows();
+            openModal('editHotkeyModal');
+        }
+        // 根据类型切换显示对应的参数输入行
+        function syncHkRows() {
+            const t = document.getElementById('hkType').value;
+            document.getElementById('hkKeysRow').style.display = t === 'keys' ? 'flex' : 'none';
+            document.getElementById('hkActionRow').style.display = t === 'action' ? 'flex' : 'none';
+            document.getElementById('hkScriptRow').style.display = t === 'script' ? 'flex' : 'none';
+        }
+        document.getElementById('hkType').addEventListener('change', syncHkRows);
+        document.getElementById('hkSaveBtn').onclick = () => {
+            const name = document.getElementById('hkName').value.trim();
+            const type = document.getElementById('hkType').value;
+            const keys = document.getElementById('hkKeys').value.trim();
+            const action = document.getElementById('hkAction').value;
+            const cmd = document.getElementById('hkCmd').value.trim();
+            if (!name) { alert('请输入名称'); return; }
+            if (type === 'keys' && !keys) { alert('请输入按键组合'); return; }
+            if (type === 'script' && !cmd) { alert('请输入脚本命令'); return; }
+            const list = loadHotkeys();
+            if (editingHkId) {
+                const idx = list.findIndex(i => i.id === editingHkId);
+                if (idx >= 0) list[idx] = { ...list[idx], name, type, keys, action, cmd };
+            } else {
+                list.push({ id: 'hk' + Date.now(), name, type, keys, action, cmd, icon: type === 'keys' ? '⌨️' : (type === 'action' ? '⚡' : '📜') });
+            }
+            saveHotkeys(list);
+            renderHotkeys();
+            closeModal('editHotkeyModal');
+        };
+        document.getElementById('hkAddBtn').onclick = () => openHkEditor(null);
+        document.getElementById('hotkeyAddBtn').onclick = () => { openModal('settingsModal'); openHkEditor(null); };
+        renderHotkeys();
+
         connect();
         window.onload = () => setTimeout(() => input.focus(), 100);
     </script>
@@ -556,6 +825,52 @@ def type_text(text):
             except: pass
     finally: typing_in_progress = False
 
+def execute_shortcut(sc):
+    """
+    执行手机端发送的自定义快捷键动作。
+    参数 sc: 前端传来的快捷键对象 {type: 'keys'|'action'|'script', keys/action/cmd}。
+    返回 True 表示执行成功，False 表示参数无效或执行失败。
+    """
+    stype = sc.get('type')
+    try:
+        if stype == 'keys':
+            # 按键组合：如 'ctrl+s'，用 + 分隔各部分
+            parts = [p.strip().lower() for p in sc.get('keys', '').split('+') if p.strip()]
+            if not parts:
+                return False
+            if len(parts) == 1:
+                pyautogui.press(parts[0])
+            else:
+                pyautogui.hotkey(*parts)
+        elif stype == 'action':
+            action = sc.get('action')
+            if action == 'enter':
+                pyautogui.press('enter')
+            elif action == 'clear':
+                reset_synced_text()
+                return True
+            elif action == 'rebase':
+                if main_loop:
+                    asyncio.run_coroutine_threadsafe(broadcast_rebase(), main_loop)
+                return True
+            else:
+                return False
+        elif stype == 'script':
+            # 启动电脑本机命令/脚本（局域网个人工具，与现有热键同信任模型）
+            cmd = sc.get('cmd', '').strip()
+            if not cmd:
+                return False
+            subprocess.Popen(cmd, shell=True)
+        else:
+            return False
+        # 按键类操作属于“电脑介入”，触发增量模式，避免与手机端输入冲突
+        if any(c.get('detect_keyboard') for c in client_configs.values()):
+            reset_synced_text()
+        return True
+    except Exception as e:
+        print(f'⚠️ 快捷键执行失败: {e}')
+        return False
+
 def send_backspaces(count):
     global typing_in_progress
     if count <= 0: return
@@ -566,7 +881,9 @@ def send_backspaces(count):
             if i < count - 1: time.sleep(0.04)
     finally: typing_in_progress = False
 
-async def handle_index(req): return web.Response(text=HTML_PAGE, content_type='text/html')
+async def handle_index(req):
+    # 禁用缓存，避免浏览器缓存旧页面导致更新不生效
+    return web.Response(text=HTML_PAGE, content_type='text/html', headers={'Cache-Control': 'no-store'})
 async def handle_websocket(req):
     global synced_text
     ws = web.WebSocketResponse()
@@ -599,6 +916,10 @@ async def handle_websocket(req):
                     synced_text = ""
                     pending_strip_punctuation = True  # 清空后下次输入需要检查标点
                     print('🔄 重置')
+                elif data.get('type') == 'shortcut':
+                    # 手机端自定义快捷键：按键组合 / 内置动作 / 启动脚本
+                    ok = execute_shortcut(data.get('sc') or {})
+                    await ws.send_json({'type': 'shortcut_result', 'ok': ok})
     finally: connected_clients.discard(ws); client_configs.pop(ws, None); print('📱 断开')
     return ws
 
