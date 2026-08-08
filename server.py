@@ -35,6 +35,7 @@ CONFIG = {
 # ===================================
 
 pyautogui.PAUSE = 0
+pyautogui.FAILSAFE = False  # 远程触控板控制场景，禁用左上角安全保护（否则移动到角落会抛异常）
 connected_clients = set()
 client_configs = {}
 synced_text = ""
@@ -42,6 +43,11 @@ main_loop = None
 typing_in_progress = False
 rebase_triggered = False  # 标记是否已触发增量模式，避免重复触发
 pending_strip_punctuation = False  # 标记下次输入是否需要去除开头标点
+
+# 切换窗口（Alt+Tab 连续切换）状态：按住 Alt 保持 1 秒，期间再次触发只按 Tab
+hotkey_alt_held = False
+hotkey_alt_timer = None
+hotkey_alt_lock = threading.Lock()
 
 # 核心 HTML/CSS 代码
 HTML_PAGE = '''<!DOCTYPE html>
@@ -75,7 +81,8 @@ HTML_PAGE = '''<!DOCTYPE html>
             height: 100vh;
             display: flex;
             flex-direction: column;
-            padding: 12px 14px 66px;
+            /* 底部留白：压缩hotkey bar高度后同步缩减，保持不遮挡主内容 */
+            padding: 12px 14px calc(68px + env(safe-area-inset-bottom));
             overflow: hidden;
         }
 
@@ -130,10 +137,11 @@ HTML_PAGE = '''<!DOCTYPE html>
         /* === 核心控制区 === */
         .control-area {
             display: flex; justify-content: space-between; align-items: flex-end;
-            margin-bottom: -22px; 
+            /* 按钮自身上移后，control-area 的负 margin 略回收，让猫咪爪子仍精准扒在纸卡上 */
+            margin-bottom: -18px; 
             position: relative; z-index: 10; padding: 0 4px;
-            /* 关键修改：增加顶部间距，让猫下移，避开上面的气泡 */
-            margin-top: 15px; 
+            /* 顶部间距进一步压缩，让按钮贴"豆包喵喵"下方 */
+            margin-top: 0px; 
         }
 
         .capsule-btn {
@@ -142,7 +150,9 @@ HTML_PAGE = '''<!DOCTYPE html>
             display: flex; align-items: center; justify-content: center;
             gap: 6px; font-size: 17px; font-family: inherit;
             box-shadow: 0 4px 0 #D7CCC8; cursor: pointer;
-            margin-bottom: 22px; transition: all 0.1s;
+            /* top 负值越小（越接近0）按钮越靠下。-42 → -34：向下落 8px。 */
+            margin-bottom: 0px; transition: all 0.1s;
+            position: relative; top: -34px;
         }
         .capsule-btn:active { transform: translateY(4px); box-shadow: none; }
         .capsule-btn.clear { background: var(--accent-orange); color: #fff; border-color: #FFA726; box-shadow: 0 4px 0 #EF6C00; }
@@ -154,6 +164,8 @@ HTML_PAGE = '''<!DOCTYPE html>
             position: relative; display: flex; justify-content: center; align-items: flex-end;
             transform-origin: bottom center;
             transform: scale(1.25);
+            /* 按钮上移后，微调猫咪向下保持爪子仍扒在纸卡顶部边缘 */
+            margin-bottom: 8px;
         }
 
         .cat-head {
@@ -254,8 +266,15 @@ HTML_PAGE = '''<!DOCTYPE html>
             box-shadow: 0 4px 15px rgba(93,64,55,0.08);
             border: 4px solid #EFEBE9;
             display: flex; flex-direction: column;
-            padding: 0 4px 10px;
+            /* 顶部加6px内边距，内容区远离圆角裁切边界，防止textarea渐变背景在圆角抗锯齿边缘形成白色尖角 */
+            padding: 6px 4px 10px;
             position: relative; z-index: 1;
+            /* 裁剪子元素到圆角内，避免textarea顶部白色渐变带盖住圆角边框形成尖角 */
+            overflow: hidden;
+            /* iOS Safari专用：确保圆角裁切同时作用于背景与内容 */
+            isolation: isolate;
+            -webkit-backface-visibility: hidden;
+                    backface-visibility: hidden;
         }
 
         textarea {
@@ -267,11 +286,11 @@ HTML_PAGE = '''<!DOCTYPE html>
             line-height: var(--line-height);
             padding: 0 16px;
             
-            /* 顶部留白大幅减小，让文字靠近猫猫 */
-            padding-top: var(--header-height);
+            /* 顶部留白：paper-card已加6px顶部内边距，因此此处相应减小6px，保持与原总留白一致 */
+            padding-top: calc(var(--header-height) - 6px);
             
             background-image: 
-                linear-gradient(to bottom, var(--card-bg) var(--header-height), transparent var(--header-height)),
+                linear-gradient(to bottom, var(--card-bg) calc(var(--header-height) - 6px), transparent calc(var(--header-height) - 6px)),
                 repeating-linear-gradient(
                     transparent,
                     transparent calc(var(--line-height) - 1px),
@@ -290,6 +309,10 @@ HTML_PAGE = '''<!DOCTYPE html>
             text-align: right; padding: 5px 16px 0; font-size: 12px; color: #BCAAA4;
             display: flex; justify-content: space-between;
         }
+        /* 触控板手势说明：默认隐藏，触控板展开时显示在底部左侧 */
+        #tpHint { display: none; color: var(--text-light); font-size: 12px; }
+        .tp-pad.open ~ .info-bar #tpHint { display: inline; }
+        .tp-pad.open ~ .info-bar #timer { display: none; }
 
         /* 弹窗通用 */
         .modal-overlay {
@@ -314,33 +337,39 @@ HTML_PAGE = '''<!DOCTYPE html>
         /* === 底部自定义快捷键栏 === */
         .hotkey-bar {
             position: fixed; bottom: 0; left: 0; right: 0;
-            display: flex; align-items: center; gap: 8px;
+            display: flex; align-items: center; gap: 6px;
             background: rgba(255, 249, 240, 0.92);
             border-top: 2px solid #EFEBE9;
-            padding: 8px 10px; z-index: 500;
+            /* 压缩上下留白：top 10→5px, bottom 12→7px(=shadow3px+margin2px+safe区过渡) */
+            padding: 5px 10px calc(7px + env(safe-area-inset-bottom)); z-index: 500;
             backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
         }
         .hotkey-scroll {
             flex: 1; min-width: 0;
-            display: flex; align-items: center; gap: 8px;
+            display: flex; align-items: center; gap: 6px;
             overflow-x: auto; white-space: nowrap;
             scrollbar-width: none; -ms-overflow-style: none;
+            /* 压缩内边距：仍保留 2px top / 6px bottom 以容纳按钮阴影(3px)和按下位移(3px) */
+            padding: 2px 0 6px;
         }
         .hotkey-scroll::-webkit-scrollbar { display: none; }
         .hotkey-chip {
             flex-shrink: 0;
-            display: inline-flex; align-items: center; gap: 4px;
-            padding: 8px 14px; border-radius: 20px;
+            display: inline-flex; align-items: center; gap: 3px;
+            /* 缩紧内部 padding：上下 8→6px，左右 14→12px */
+            padding: 6px 12px; border-radius: 18px;
             background: #fff; border: 2px solid #EFEBE9;
             box-shadow: 0 3px 0 #D7CCC8;
-            font-family: inherit; font-size: 15px; color: var(--text-main);
+            /* 字号略小：15→14，与压缩后的高度匹配 */
+            font-family: inherit; font-size: 14px; color: var(--text-main);
             cursor: pointer; transition: all 0.1s;
         }
         .hotkey-chip:active { transform: translateY(3px); box-shadow: none; }
         .hotkey-add {
-            flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
+            /* 加号按钮也略缩小：38→34px */
+            flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%;
             background: var(--accent-orange); color: #fff; border: none;
-            font-size: 20px; line-height: 1; cursor: pointer;
+            font-size: 18px; line-height: 1; cursor: pointer;
             box-shadow: 0 3px 0 #EF6C00; transition: all 0.1s;
         }
         .hotkey-add:active { transform: translateY(3px); box-shadow: none; }
@@ -362,12 +391,58 @@ HTML_PAGE = '''<!DOCTYPE html>
         .hk-item-icon { font-size: 18px; }
         .hk-item-info { flex: 1; min-width: 0; }
         .hk-item-name { font-size: 14px; }
+        .hk-locked { font-size: 10px; color: #A1887F; border: 1px solid #D7CCC8; border-radius: 6px; padding: 0 4px; margin-left: 6px; font-style: normal; vertical-align: 1px; }
         .hk-item-desc { font-size: 11px; color: var(--text-light); }
         .hk-item-btn { border: none; background: transparent; font-size: 14px; cursor: pointer; padding: 4px 6px; border-radius: 8px; color: var(--text-light); }
         .hk-item-btn.del { color: #E57373; }
         .hk-item-btn:active { background: #FBE9E7; }
         .setting-input-wide { flex: 1; min-width: 0; padding: 6px 8px; border: 2px solid #EFEBE9; border-radius: 8px; font-family: inherit; font-size: 15px; color: var(--text-main); background: #fff; }
         .hk-empty { text-align: center; font-size: 12px; color: #BCAAA4; padding: 8px 0; }
+
+        /* === 触控板 === */
+        .tp-fab {
+            /* bottom 从 34px 调到 18px：向纸卡底部再下挪约16px，避免看起来悬空在上方 */
+            position: absolute; left: 10px; bottom: 18px; z-index: 5;
+            width: 42px; height: 42px; border-radius: 50%;
+            background: #fff; border: 2px solid #EFEBE9;
+            box-shadow: 0 3px 0 #D7CCC8;
+            font-size: 18px; line-height: 1; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .tp-fab:active { transform: translateY(3px); box-shadow: none; }
+        .tp-pad { display: none; flex: 1; flex-direction: column; min-height: 0; }
+        .tp-pad.open { display: flex; }
+        .tp-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 6px 12px; font-size: 14px; color: var(--text-main);
+        }
+        .tp-header small { font-size: 10px; color: #BCAAA4; margin-left: 4px; }
+        .tp-mini {
+            width: 34px; height: 34px; border-radius: 50%;
+            background: var(--accent-orange); color: #fff; border: none;
+            font-size: 18px; line-height: 1; cursor: pointer; box-shadow: 0 3px 0 #EF6C00;
+            flex-shrink: 0;
+        }
+        .tp-mini:active { transform: translateY(3px); box-shadow: none; }
+        .tp-surface {
+            flex: 1; margin: 0 12px; border-radius: 16px;
+            background: #FFF3E0; border: 3px dashed #FFCC80;
+            touch-action: none; user-select: none; -webkit-user-select: none;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .tp-surface.active { background: #FFE0B2; }
+        .tp-hint { font-size: 14px; color: #BCAAA4; pointer-events: none; }
+        .tp-footer {
+            display: flex; justify-content: center; align-items: center; gap: 10px;
+            padding: 8px 0; font-size: 14px; color: var(--text-main);
+        }
+        .tp-footer button {
+            width: 32px; height: 32px; border-radius: 50%;
+            border: 2px solid #EFEBE9; background: #fff; color: var(--text-main);
+            font-size: 16px; line-height: 1; cursor: pointer; box-shadow: 0 2px 0 #D7CCC8;
+        }
+        .tp-footer button:active { transform: translateY(2px); box-shadow: none; }
+        .tp-footer .tp-mini { background: var(--accent-orange); color: #fff; border: none; width: 34px; height: 34px; box-shadow: 0 3px 0 #EF6C00; }
     </style>
 </head>
 <body>
@@ -411,12 +486,29 @@ HTML_PAGE = '''<!DOCTYPE html>
     </div>
 
     <div class="paper-card">
+        <button class="tp-fab" id="tpFab" title="触控板">🖱️</button>
         <textarea 
             id="input" 
             placeholder="点击这里，告诉猫猫你想写什么..."
             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
         ></textarea>
+        <div class="tp-pad" id="tpPad">
+            <div class="tp-header">
+                <span>🖱️ 触控板</span>
+            </div>
+            <div class="tp-surface" id="tpSurface">
+                <div class="tp-hint">在此滑动控制电脑鼠标</div>
+            </div>
+            <div class="tp-footer">
+                <button class="tp-mini" id="tpMini" title="缩小">－</button>
+                <span>灵敏度</span>
+                <button id="tpSensDown">－</button>
+                <span id="tpSensVal">1.5</span>
+                <button id="tpSensUp">＋</button>
+            </div>
+        </div>
         <div class="info-bar">
+            <span id="tpHint">单指移动·轻点·双击·双指滚动/右键·双击拖拽</span>
             <span id="timer"></span>
             <span id="stats">已同步 0 字</span>
         </div>
@@ -548,7 +640,7 @@ HTML_PAGE = '''<!DOCTYPE html>
         loadSettings();
 
         let ws = null, lastSentText = '', totalSent = 0, ignoreLength = 0;
-        let debounceTimer = null, autoClearTimer = null, enterConfirmTimer = null, autoClearCountdown = 0;
+        let debounceTimer = null, autoClearTimer = null, autoClearCountdown = 0;
 
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -588,6 +680,12 @@ HTML_PAGE = '''<!DOCTYPE html>
 
         input.addEventListener('input', () => {
             catAnim.classList.add('typing');
+            // 输入法换行：视为发送，同步到电脑回车后立即清空手机输入框
+            if (input.value.includes('\\n')) {
+                catAnim.classList.remove('typing');
+                performClear();
+                return;
+            }
             const delay = parseInt(debounceDelayInput.value) || 500;
             if(debounceTimer) clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
@@ -620,23 +718,18 @@ HTML_PAGE = '''<!DOCTYPE html>
             }
         }
 
-        input.addEventListener('keydown', (e) => {
-            if(e.key === 'Enter') {
-                e.preventDefault();
-                if(enterConfirmTimer) clearTimeout(enterConfirmTimer);
-                enterConfirmTimer = setTimeout(() => { enterConfirmTimer = null; performClear(); }, 300);
-            }
-        });
+        // 注意：不拦截 Enter 按键，让输入法换行/回车正常插入换行符，
+        // 由后端 diff 同步为电脑回车键（手机软键盘换行在部分平台会触发 keydown Enter）
 
         // ============ 自定义快捷键模块 ============
         const DEFAULT_HOTKEYS = [
-            { id: 'hk1', name: '回车', icon: '⏎', type: 'action', action: 'enter' },
-            { id: 'hk2', name: 'Esc', icon: '⎋', type: 'keys', keys: 'esc' },
-            { id: 'hk3', name: '切换窗口', icon: '🔄', type: 'keys', keys: 'alt+tab' },
-            { id: 'hk4', name: '全选', icon: '🔲', type: 'keys', keys: 'ctrl+a' },
-            { id: 'hk5', name: '删除', icon: '🗑️', type: 'keys', keys: 'delete' },
-            { id: 'hk6', name: '复制', icon: '📋', type: 'keys', keys: 'ctrl+c' },
-            { id: 'hk7', name: '粘贴', icon: '📌', type: 'keys', keys: 'ctrl+v' },
+            // 固定快捷键（切换窗口）：不可删除、不可编辑，始终排在首位
+            { id: 'hk_switch', name: '切换窗口', icon: '🔄', type: 'keys', keys: 'alt+tab', locked: true },
+            { id: 'hk1', name: 'Esc', icon: '⎋', type: 'keys', keys: 'esc' },
+            { id: 'hk2', name: '全选', icon: '🔲', type: 'keys', keys: 'ctrl+a' },
+            { id: 'hk3', name: '删除', icon: '🗑️', type: 'keys', keys: 'delete' },
+            { id: 'hk4', name: '复制', icon: '📋', type: 'keys', keys: 'ctrl+c' },
+            { id: 'hk5', name: '粘贴', icon: '📌', type: 'keys', keys: 'ctrl+v' },
         ];
         const hotkeyScroll = document.getElementById('hotkeyScroll');
         const hotkeyListEl = document.getElementById('hkList');
@@ -664,16 +757,23 @@ HTML_PAGE = '''<!DOCTYPE html>
             window.visualViewport.addEventListener('scroll', syncHotkeyBarPosition);
         }
 
-        const HOTKEYS_VERSION = '4'; // 默认快捷键列表变更时递增，用于自动覆盖旧版默认数据
+        const HOTKEYS_VERSION = '5'; // 默认快捷键列表变更时递增，用于自动覆盖旧版默认数据
         function loadHotkeys() {
             const raw = localStorage.getItem('hotkeys');
             const ver = localStorage.getItem('hotkeys_version');
+            let list;
             if (!raw || ver !== HOTKEYS_VERSION) {
-                localStorage.setItem('hotkeys', JSON.stringify(DEFAULT_HOTKEYS));
-                localStorage.setItem('hotkeys_version', HOTKEYS_VERSION);
-                return DEFAULT_HOTKEYS.slice();
+                list = DEFAULT_HOTKEYS.slice();
+            } else {
+                try { list = JSON.parse(raw); } catch (e) { list = DEFAULT_HOTKEYS.slice(); }
             }
-            try { return JSON.parse(raw); } catch (e) { return DEFAULT_HOTKEYS.slice(); }
+            // 迁移：输入法换行已自动映射为电脑回车，移除已废弃的「回车」动作项
+            list = list.filter(h => !(h.type === 'action' && h.action === 'enter'));
+            // 迁移：固定项（切换窗口）始终存在且置于首位，旧的同键项一并移除
+            const locked = DEFAULT_HOTKEYS.find(h => h.locked);
+            list = list.filter(h => !(h.locked || (h.type === 'keys' && h.keys === 'alt+tab')));
+            if (locked) list.unshift({ ...locked });
+            return list;
         }
         function saveHotkeys(list) {
             localStorage.setItem('hotkeys', JSON.stringify(list));
@@ -704,6 +804,10 @@ HTML_PAGE = '''<!DOCTYPE html>
         // 点击快捷键：发送到电脑端执行
         function onHotkeyClick(item) {
             if (!ws || ws.readyState !== WebSocket.OPEN) { alert('未连接到电脑，请先连接'); return; }
+            // 回车动作：电脑端按回车确认输入，同时清空手机端文字
+            if (item.type === 'action' && item.action === 'enter') {
+                performClearWithBlur();
+            }
             ws.send(JSON.stringify({ type: 'shortcut', sc: item }));
             // 收起键盘，让用户看到电脑端执行效果后继续输入
             input.blur();
@@ -717,21 +821,26 @@ HTML_PAGE = '''<!DOCTYPE html>
             list.forEach((item, idx) => {
                 const row = document.createElement('div');
                 row.className = 'hk-item';
+                const lockedTag = item.locked ? '<em class="hk-locked">固定</em>' : '';
+                const actions = item.locked ? '' : `
+                    <button class="hk-item-btn" data-act="edit">✏️</button>
+                    <button class="hk-item-btn del" data-act="del">🗑️</button>`;
                 row.innerHTML = `
                     <span class="hk-item-icon">${item.icon || '🔘'}</span>
                     <div class="hk-item-info">
-                        <div class="hk-item-name">${item.name}</div>
+                        <div class="hk-item-name">${item.name}${lockedTag}</div>
                         <div class="hk-item-desc">${hkDesc(item)}</div>
                     </div>
-                    <button class="hk-item-btn" data-act="edit">✏️</button>
-                    <button class="hk-item-btn del" data-act="del">🗑️</button>
+                    ${actions}
                 `;
-                row.querySelector('[data-act="edit"]').onclick = () => openHkEditor(item);
-                row.querySelector('[data-act="del"]').onclick = () => {
-                    list.splice(idx, 1);
-                    saveHotkeys(list);
-                    renderHotkeys();
-                };
+                if (!item.locked) {
+                    row.querySelector('[data-act="edit"]').onclick = () => openHkEditor(item);
+                    row.querySelector('[data-act="del"]').onclick = () => {
+                        list.splice(idx, 1);
+                        saveHotkeys(list);
+                        renderHotkeys();
+                    };
+                }
                 hotkeyListEl.appendChild(row);
             });
         }
@@ -781,8 +890,174 @@ HTML_PAGE = '''<!DOCTYPE html>
         document.getElementById('hotkeyAddBtn').onclick = () => { openModal('settingsModal'); openHkEditor(null); };
         renderHotkeys();
 
+        // ============ 触控板模块 ============
+        const tpFab = document.getElementById('tpFab');
+        const tpPad = document.getElementById('tpPad');
+        const tpSurface = document.getElementById('tpSurface');
+
+        // 触控板展开/收起：占据输入区位置，底部快捷键栏不受影响
+        function openTouchpad() {
+            input.blur();
+            tpFab.style.display = 'none';
+            input.style.display = 'none';
+            tpPad.classList.add('open');
+        }
+        function closeTouchpad() {
+            tpPad.classList.remove('open');
+            input.style.display = '';
+            tpFab.style.display = '';
+            requestAnimationFrame(() => requestAnimationFrame(() => input.focus()));
+        }
+        tpFab.addEventListener('click', openTouchpad);
+        document.getElementById('tpMini').addEventListener('click', closeTouchpad);
+
+        // 触控板灵敏度（存 localStorage）
+        function tpSensitivity() { return parseFloat(localStorage.getItem('tpSensitivity')) || 2; }
+        function renderTpSens() { document.getElementById('tpSensVal').textContent = tpSensitivity().toFixed(1); }
+        document.getElementById('tpSensDown').addEventListener('click', () => {
+            localStorage.setItem('tpSensitivity', Math.max(0.5, tpSensitivity() - 0.5).toFixed(1));
+            renderTpSens();
+        });
+        document.getElementById('tpSensUp').addEventListener('click', () => {
+            localStorage.setItem('tpSensitivity', Math.min(3, tpSensitivity() + 0.5).toFixed(1));
+            renderTpSens();
+        });
+        renderTpSens();
+
+        // 手势采集
+        function sendTouch(action, extra) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify(Object.assign({ type: 'touch', action }, extra || {})));
+        }
+        let tpTouches = new Map();      // identifier -> {x, y}
+        let tpMode = 'none';            // none | move | scroll
+        let tpMoved = false;            // 单指是否产生位移（区分点击）
+        let tpScrollMoved = false;      // 双指是否产生滚动（区分右键）
+        let tpStartX = 0, tpStartY = 0; // 单指起始位置
+        let tpLastTap = 0;              // 上次轻点时间（用于双击/拖拽判定）
+        let tpDrag = false;             // 是否处于拖拽模式（双击第二按按住不放）
+        let tpPendingMove = null;       // 累积待发送位移
+        let tpRafId = null;
+
+        // rAF 节流发送：合并一帧内的位移
+        function tpFlushMove() {
+            tpRafId = null;
+            if (tpPendingMove && (tpPendingMove.dx || tpPendingMove.dy)) {
+                const sens = tpSensitivity();
+                sendTouch(tpDrag ? 'drag_move' : 'move', { dx: Math.round(tpPendingMove.dx * sens), dy: Math.round(tpPendingMove.dy * sens) });
+                tpPendingMove = null;
+            }
+        }
+        function tpScheduleMove(dx, dy) {
+            if (!tpPendingMove) tpPendingMove = { dx: 0, dy: 0 };
+            tpPendingMove.dx += dx;
+            tpPendingMove.dy += dy;
+            if (!tpRafId) tpRafId = requestAnimationFrame(tpFlushMove);
+        }
+
+        tpSurface.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            tpSurface.classList.add('active');
+            tpTouches.clear();
+            for (let i = 0; i < e.touches.length; i++) tpTouches.set(e.touches[i].identifier, { x: e.touches[i].clientX, y: e.touches[i].clientY });
+            if (e.touches.length === 1) {
+                const now = Date.now();
+                // 双击第二按（距上次轻点 < 300ms）→ 进入拖拽模式，按住左键
+                if (tpLastTap && now - tpLastTap < 300) {
+                    tpDrag = true;
+                    sendTouch('drag_start');
+                } else {
+                    tpDrag = false;
+                }
+                tpLastTap = 0;
+                tpMode = 'move';
+                tpMoved = false;
+                tpStartX = e.touches[0].clientX;
+                tpStartY = e.touches[0].clientY;
+            } else if (e.touches.length === 2) {
+                tpMode = 'scroll';
+                tpScrollMoved = false;
+            }
+        }, { passive: false });
+
+        tpSurface.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            // 单指变双指：切换到滚动模式
+            if (e.touches.length === 2 && tpMode !== 'scroll') {
+                tpMode = 'scroll';
+                tpScrollMoved = false;
+                tpTouches.clear();
+                for (let i = 0; i < e.touches.length; i++) tpTouches.set(e.touches[i].identifier, { x: e.touches[i].clientX, y: e.touches[i].clientY });
+                return;
+            }
+            if (tpMode === 'move' && e.touches.length === 1) {
+                const p = e.touches[0];
+                const prev = tpTouches.get(p.identifier);
+                if (!prev) return;
+                const dx = p.clientX - prev.x;
+                const dy = p.clientY - prev.y;
+                tpTouches.set(p.identifier, { x: p.clientX, y: p.clientY });
+                if (Math.abs(p.clientX - tpStartX) > 8 || Math.abs(p.clientY - tpStartY) > 8) tpMoved = true;
+                tpScheduleMove(dx, dy);
+            } else if (tpMode === 'scroll') {
+                // 双指垂直平均位移换算滚轮格数：双指上滑(dy负) → 内容向上滚动(正)
+                let totalDy = 0, cnt = 0;
+                for (let i = 0; i < e.touches.length; i++) {
+                    const p = e.touches[i];
+                    const prev = tpTouches.get(p.identifier);
+                    if (prev) { totalDy += p.clientY - prev.y; cnt++; }
+                    tpTouches.set(p.identifier, { x: p.clientX, y: p.clientY });
+                }
+                if (cnt) {
+                    const units = Math.round(-(totalDy / cnt) / 10);
+                    if (units) { tpScrollMoved = true; sendTouch('scroll', { dy: units }); }
+                }
+            }
+        }, { passive: false });
+
+        tpSurface.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            tpSurface.classList.remove('active');
+            if (tpMode === 'move' && e.touches.length === 0) {
+                if (tpDrag) {
+                    // 先 flush 残余拖拽位移（保持 drag_move），再松开左键
+                    if (tpRafId) { cancelAnimationFrame(tpRafId); tpRafId = null; tpFlushMove(); }
+                    sendTouch('drag_end');
+                    tpDrag = false;
+                } else {
+                    if (!tpMoved) {
+                        const now = Date.now();
+                        if (now - tpLastTap < 300) { sendTouch('double_tap'); tpLastTap = 0; }
+                        else { tpLastTap = now; sendTouch('tap'); }
+                    }
+                    if (tpRafId) { cancelAnimationFrame(tpRafId); tpRafId = null; tpFlushMove(); }
+                }
+                tpMode = 'none';
+                tpTouches.clear();
+            } else if (tpMode === 'scroll' && e.touches.length < 2) {
+                // 双指结束：全程无滚动则判定为右键
+                if (!tpScrollMoved) sendTouch('right_tap');
+                tpMode = 'none';
+                tpTouches.clear();
+                tpScrollMoved = false;
+            }
+        }, { passive: false });
+
+        tpSurface.addEventListener('touchcancel', () => {
+            tpSurface.classList.remove('active');
+            if (tpDrag) { sendTouch('drag_end'); tpDrag = false; }
+            tpMode = 'none';
+            tpTouches.clear();
+            if (tpRafId) { cancelAnimationFrame(tpRafId); tpRafId = null; }
+        });
+
         connect();
-        window.onload = () => setTimeout(() => input.focus(), 100);
+        // 首次访问页面自动聚焦输入框，尽量直接唤起手机输入法
+        window.onload = () => {
+            setTimeout(() => { try { input.focus(); } catch(e) {} }, 100);
+            // iOS 等平台禁止脚本自动弹键盘，改为用户首次触摸页面任意处时聚焦唤起
+            document.addEventListener('touchstart', () => { try { input.focus(); } catch(e) {} }, { once: true });
+        };
     </script>
 </body>
 </html>
@@ -810,20 +1085,72 @@ def compute_diff(old, new):
     return len(old) - common, new[common:]
 
 def type_text(text):
+    """
+    将文本输入到电脑当前焦点处（文本段走剪贴板粘贴，换行符 \n 映射为回车键）。
+    参数 text: 要输入的文本，可包含换行。
+    返回 None。
+    """
     global typing_in_progress
     if not text: return
+    release_alt()  # 输入文字前先释放保持中的 Alt，避免 Alt 与 Ctrl+V 组合造成干扰
     typing_in_progress = True
     try:
-        with clipboard_lock:
-            try: orig = pyperclip.paste()
-            except: orig = ''
-            pyperclip.copy(text)
-            if platform.system() == 'Darwin': pyautogui.hotkey('command', 'v')
-            else: pyautogui.hotkey('ctrl', 'v')
-            time.sleep(0.1)
-            try: pyperclip.copy(orig)
-            except: pass
+        # 按换行拆分，段间用回车键衔接，避免剪贴板粘贴 \n 在目标程序中失效
+        segments = text.split('\n')
+        for i, seg in enumerate(segments):
+            if seg:
+                with clipboard_lock:
+                    try: orig = pyperclip.paste()
+                    except: orig = ''
+                    pyperclip.copy(seg)
+                    if platform.system() == 'Darwin': pyautogui.hotkey('command', 'v')
+                    else: pyautogui.hotkey('ctrl', 'v')
+                    time.sleep(0.1)
+                    try: pyperclip.copy(orig)
+                    except: pass
+            if i < len(segments) - 1:
+                pyautogui.press('enter')
+                time.sleep(0.05)
     finally: typing_in_progress = False
+
+def switch_window():
+    """
+    执行切换窗口（Alt+Tab 连续切换）。
+    首次按住 Alt 并按 Tab；1 秒内再次触发只按 Tab 切到下一个窗口，超时自动释放 Alt。
+    返回 True 表示执行成功。
+    """
+    global hotkey_alt_held, hotkey_alt_timer, typing_in_progress
+    with hotkey_alt_lock:
+        # 取消上一次的自动释放定时器，重新计时 1 秒
+        if hotkey_alt_timer:
+            hotkey_alt_timer.cancel()
+        typing_in_progress = True
+        try:
+            if not hotkey_alt_held:
+                pyautogui.keyDown('alt')
+                hotkey_alt_held = True
+            pyautogui.press('tab')
+        finally:
+            typing_in_progress = False
+        hotkey_alt_timer = threading.Timer(1.0, release_alt)
+        hotkey_alt_timer.daemon = True
+        hotkey_alt_timer.start()
+    return True
+
+def release_alt():
+    """
+    释放保持中的 Alt 键（1 秒无后续切换时由定时器触发，或执行其他动作前主动调用）。
+    返回 None。
+    """
+    global hotkey_alt_held, hotkey_alt_timer
+    with hotkey_alt_lock:
+        if hotkey_alt_held:
+            try:
+                pyautogui.keyUp('alt')
+            except Exception as e:
+                print(f'⚠️ 释放 Alt 失败: {e}')
+            hotkey_alt_held = False
+        hotkey_alt_timer = None
 
 def execute_shortcut(sc):
     """
@@ -838,11 +1165,17 @@ def execute_shortcut(sc):
             parts = [p.strip().lower() for p in sc.get('keys', '').split('+') if p.strip()]
             if not parts:
                 return False
-            if len(parts) == 1:
+            if len(parts) == 2 and 'alt' in parts and 'tab' in parts:
+                # 切换窗口：按住 Alt 保持 1 秒，期间再次触发只按 Tab 连续切换
+                switch_window()
+            elif len(parts) == 1:
+                release_alt()  # 单键操作前先释放保持中的 Alt
                 pyautogui.press(parts[0])
             else:
+                release_alt()  # 其他组合键操作前先释放保持中的 Alt
                 pyautogui.hotkey(*parts)
         elif stype == 'action':
+            release_alt()  # 执行动作前先释放保持中的 Alt
             action = sc.get('action')
             if action == 'enter':
                 pyautogui.press('enter')
@@ -856,6 +1189,7 @@ def execute_shortcut(sc):
             else:
                 return False
         elif stype == 'script':
+            release_alt()  # 启动脚本前先释放保持中的 Alt
             # 启动电脑本机命令/脚本（局域网个人工具，与现有热键同信任模型）
             cmd = sc.get('cmd', '').strip()
             if not cmd:
@@ -871,9 +1205,66 @@ def execute_shortcut(sc):
         print(f'⚠️ 快捷键执行失败: {e}')
         return False
 
+# 触控板虚拟鼠标位置：累积增量做绝对定位，规避 Windows 高频 SetCursorPos 后读取位置滞后导致的“抖动不移动”
+touchpad_pos = None
+
+def move_cursor_by(dx, dy):
+    """
+    按增量移动鼠标：基于虚拟位置累积做绝对定位，避免每次读实际光标位置造成位移抵消。
+    参数 dx/dy: 相对位移（像素）。
+    """
+    global touchpad_pos
+    if dx == 0 and dy == 0:
+        return
+    if touchpad_pos is None:
+        touchpad_pos = pyautogui.position()
+    sw, sh = pyautogui.size()
+    tx = min(max(0, touchpad_pos[0] + dx), sw - 1)
+    ty = min(max(0, touchpad_pos[1] + dy), sh - 1)
+    touchpad_pos = (tx, ty)
+    pyautogui.moveTo(tx, ty)
+
+def handle_touch(msg):
+    """
+    执行手机端触控板发送的触摸动作。
+    参数 msg: 前端传来的触控消息 {action, dx, dy}（dx/dy 已按灵敏度换算）。
+    返回 True 表示执行成功，False 表示参数无效或执行失败。
+    """
+    global touchpad_pos
+    action = msg.get('action')
+    try:
+        if action == 'move':
+            move_cursor_by(msg.get('dx', 0), msg.get('dy', 0))
+        elif action == 'tap':
+            touchpad_pos = None  # 点击后重新同步实际位置
+            pyautogui.click()
+        elif action == 'double_tap':
+            touchpad_pos = None
+            pyautogui.doubleClick()
+        elif action == 'right_tap':
+            touchpad_pos = None
+            pyautogui.rightClick()
+        elif action == 'scroll':
+            pyautogui.scroll(msg.get('dy', 0))
+        elif action == 'drag_start':
+            touchpad_pos = None  # 按下前重新同步实际位置
+            pyautogui.mouseDown()
+        elif action == 'drag_move':
+            move_cursor_by(msg.get('dx', 0), msg.get('dy', 0))
+        elif action == 'drag_end':
+            touchpad_pos = None  # 松开后重新同步实际位置
+            pyautogui.mouseUp()
+        else:
+            return False
+        return True
+    except Exception as e:
+        print(f'⚠️ 触控执行失败: {e}')
+        return False
+
 def send_backspaces(count):
     global typing_in_progress
     if count <= 0: return
+    release_alt()  # 回退输入前先释放保持中的 Alt，避免干扰组合键
     typing_in_progress = True
     try:
         for i in range(count):
@@ -910,7 +1301,7 @@ async def handle_websocket(req):
                         pending_strip_punctuation = False  # 只处理一次
                     rebase_triggered = False  # 手机端有新输入，重置增量触发标志
                     if d_cnt: send_backspaces(d_cnt); print(f'⌫ {d_cnt}')
-                    if add_txt: type_text(add_txt); print(f'⌨️ {add_txt}')
+                    if add_txt: type_text(add_txt); print(f'⌨️ {add_txt!r}')
                     synced_text = new_txt
                 elif data.get('type') == 'reset':
                     synced_text = ""
@@ -920,6 +1311,9 @@ async def handle_websocket(req):
                     # 手机端自定义快捷键：按键组合 / 内置动作 / 启动脚本
                     ok = execute_shortcut(data.get('sc') or {})
                     await ws.send_json({'type': 'shortcut_result', 'ok': ok})
+                elif data.get('type') == 'touch':
+                    # 手机端触控板：移动 / 点击 / 双击 / 右键 / 滚动
+                    handle_touch(data)
     finally: connected_clients.discard(ws); client_configs.pop(ws, None); print('📱 断开')
     return ws
 
