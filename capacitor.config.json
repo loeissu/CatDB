@@ -1,0 +1,9 @@
+{
+  "appId": "com.loeissu.catdb",
+  "appName": "豆包喵喵",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http"
+  },
+  "plugins": {}
+}

@@ -1,0 +1,16 @@
+{
+  "name": "catdb",
+  "version": "2.0.0",
+  "description": "CatDB - 手机语音输入 → 电脑实时上屏",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'Static web app, no build needed'"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0"
+  },
+  "author": "loeissu",
+  "license": "MIT"
+}

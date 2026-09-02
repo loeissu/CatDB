@@ -208,3 +208,20 @@ __marimo__/
 
 .idea
 .trae
+
+# Capacitor / Node
+node_modules/
+package-lock.json
+
+# Build outputs
+releases/
+dist/
+build/
+
+# Android build
+android/.gradle/
+android/app/build/
+android/build/
+
+# www (generated from server.py)
+www/

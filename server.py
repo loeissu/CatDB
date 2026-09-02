@@ -11,6 +11,8 @@ import platform
 import sys
 import threading
 import time
+import logging
+import argparse
 from aiohttp import web
 import aiohttp
 import pyautogui
@@ -24,6 +26,14 @@ try:
 except Exception:
     pass
 
+# 日志配置
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger('catdb')
+
 # 剪贴板操作锁
 clipboard_lock = threading.Lock()
 
@@ -34,6 +44,14 @@ CONFIG = {
 }
 # ===================================
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='豆包喵喵 - 手机语音输入 → 电脑实时上屏')
+    parser.add_argument('--port', type=int, default=5000, help='服务端口 (默认: 5000)')
+    parser.add_argument('--hotkey', type=str, default='f9', help='清空快捷键 (默认: f9)')
+    args = parser.parse_args()
+    CONFIG['port'] = args.port
+    CONFIG['hotkey'] = args.hotkey
+
 pyautogui.PAUSE = 0
 pyautogui.FAILSAFE = False  # 远程触控板控制场景，禁用左上角安全保护（否则移动到角落会抛异常）
 connected_clients = set()
@@ -43,6 +61,13 @@ main_loop = None
 typing_in_progress = False
 rebase_triggered = False  # 标记是否已触发增量模式，避免重复触发
 pending_strip_punctuation = False  # 标记下次输入是否需要去除开头标点
+
+# 系统托盘相关
+tray_icon = None
+qr_window = None
+search_status = "searching"  # searching / connected / qr_showed
+search_start_time = None
+QR_TIMEOUT = 10  # 10秒后显示二维码
 
 # 切换窗口（Alt+Tab 连续切换）状态：按住 Alt 保持 1 秒，期间再次触发只按 Tab
 hotkey_alt_held = False
@@ -1078,11 +1103,29 @@ def get_local_ip():
     except: return '127.0.0.1'
 
 def compute_diff(old, new):
-    common = 0
+    if old == new:
+        return 0, ''
+    # 找到共同前缀长度
+    prefix = 0
     for i in range(min(len(old), len(new))):
-        if old[i] == new[i]: common += 1
-        else: break
-    return len(old) - common, new[common:]
+        if old[i] == new[i]:
+            prefix += 1
+        else:
+            break
+    # 找到共同后缀长度（从前缀结束后开始）
+    suffix = 0
+    old_tail = old[prefix:]
+    new_tail = new[prefix:]
+    for i in range(min(len(old_tail), len(new_tail))):
+        if old_tail[-(i+1)] == new_tail[-(i+1)]:
+            suffix += 1
+        else:
+            break
+    # 需要删除的字符数 = 旧文本中除去前后缀的部分
+    del_count = len(old) - prefix - suffix
+    # 需要添加的文本 = 新文本中除去前后缀的部分
+    add_text = new[prefix:len(new)-suffix]
+    return del_count, add_text
 
 def type_text(text):
     """
@@ -1372,21 +1415,244 @@ def setup_hotkey():
         print('🖱️ 鼠标左键监测已启用')
     except: print('⚠️  热键需安装 pynput')
 
+async def handle_qr(req):
+    try:
+        import qrcode
+        from io import BytesIO
+        ip = get_local_ip()
+        port = CONFIG.get('port', 5000)
+        url = f'http://{ip}:{port}'
+        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color='black', back_color='white')
+        buf = BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        return web.Response(body=buf.read(), content_type='image/png')
+    except Exception as e:
+        return web.Response(text=f'QR generation failed: {e}', status=500)
+
+# ============== 系统托盘 + QR 窗口逻辑 ==============
+def create_qr_image():
+    """生成 QR 码的 PIL Image 对象"""
+    try:
+        import qrcode
+        ip = get_local_ip()
+        port = CONFIG.get('port', 5000)
+        url = f'http://{ip}:{port}'
+        qr = qrcode.QRCode(version=1, box_size=8, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color='black', back_color='white')
+        return img
+    except Exception as e:
+        logger.error(f'生成二维码失败: {e}')
+        return None
+
+def show_qr_window():
+    """显示二维码弹窗（在子线程中运行）"""
+    global qr_window, search_status
+    if qr_window is not None:
+        return
+    search_status = "qr_showed"
+    
+    try:
+        import tkinter as tk
+        from PIL import ImageTk
+        
+        qr_window = tk.Tk()
+        qr_window.title('豆包喵喵 - 扫码连接')
+        qr_window.resizable(False, False)
+        qr_window.attributes('-topmost', True)
+        
+        # 窗口居中
+        w, h = 320, 400
+        sw = qr_window.winfo_screenwidth()
+        sh = qr_window.winfo_screenheight()
+        qr_window.geometry(f'{w}x{h}+{(sw-w)//2}+{(sh-h)//2}')
+        
+        # 标题
+        title = tk.Label(qr_window, text='📱 使用手机扫描二维码连接', font=('微软雅黑', 12, 'bold'))
+        title.pack(pady=(20, 10))
+        
+        # QR 码
+        qr_img = create_qr_image()
+        if qr_img:
+            tk_img = ImageTk.PhotoImage(qr_img)
+            qr_label = tk.Label(qr_window, image=tk_img)
+            qr_label.image = tk_img  # 保持引用
+            qr_label.pack(pady=10)
+        
+        # URL 显示
+        ip = get_local_ip()
+        port = CONFIG.get('port', 5000)
+        url_label = tk.Label(qr_window, text=f'http://{ip}:{port}', font=('Consolas', 11), fg='#5D4037')
+        url_label.pack(pady=5)
+        
+        # 提示
+        hint = tk.Label(qr_window, text='或在手机浏览器中输入上方地址', font=('微软雅黑', 10), fg='#8D6E63')
+        hint.pack(pady=(5, 15))
+        
+        # 关闭按钮
+        close_btn = tk.Button(qr_window, text='关闭', font=('微软雅黑', 11), width=12,
+                             command=lambda: close_qr_window(), bg='#FFB74D', fg='white')
+        close_btn.pack(pady=10)
+        
+        qr_window.protocol('WM_DELETE_WINDOW', close_qr_window)
+        qr_window.mainloop()
+    except ImportError:
+        logger.error('显示二维码窗口需要 tkinter 和 Pillow')
+        search_status = "searching"
+    except Exception as e:
+        logger.error(f'显示二维码窗口失败: {e}')
+        search_status = "searching"
+
+def close_qr_window():
+    """关闭 QR 窗口"""
+    global qr_window
+    if qr_window:
+        qr_window.destroy()
+        qr_window = None
+
+def update_tray_status(status_text, icon_path=None):
+    """更新托盘图标和提示"""
+    global tray_icon
+    if tray_icon is None:
+        return
+    try:
+        if icon_path:
+            from PIL import Image
+            tray_icon.icon = Image.open(icon_path)
+        tray_icon.title = f'豆包喵喵 - {status_text}'
+    except:
+        pass
+
+def on_tray_show_qr(icon, item):
+    """托盘菜单：显示二维码"""
+    threading.Thread(target=show_qr_window, daemon=True).start()
+
+def on_tray_show_ip(icon, item):
+    """托盘菜单：显示 IP 地址"""
+    ip = get_local_ip()
+    port = CONFIG.get('port', 5000)
+    logger.info(f'📱 手机访问: http://{ip}:{port}')
+
+def on_tray_exit(icon, item):
+    """托盘菜单：退出"""
+    global tray_icon
+    if tray_icon:
+        tray_icon.stop()
+    os._exit(0)
+
+def create_tray_icon():
+    """创建系统托盘图标"""
+    global tray_icon
+    try:
+        import pystray
+        from PIL import Image, ImageDraw, ImageFont
+        
+        # 创建默认图标（橙色猫咪爪印）
+        img = Image.new('RGBA', (64, 64), (255, 183, 77, 255))
+        draw = ImageDraw.Draw(img)
+        # 画一个简单的猫爪
+        draw.ellipse([16, 24, 48, 56], fill='#5D4037')  # 主掌
+        draw.ellipse([12, 12, 24, 24], fill='#5D4037')  # 左上趾
+        draw.ellipse([24, 8, 36, 20], fill='#5D4037')   # 中上趾
+        draw.ellipse([36, 12, 48, 24], fill='#5D4037')  # 右上趾
+        draw.ellipse([20, 30, 44, 52], fill='#FFE0B2')  # 掌心
+        
+        menu = pystray.Menu(
+            pystray.MenuItem('显示二维码', on_tray_show_qr, default=True),
+            pystray.MenuItem('显示 IP 地址', on_tray_show_ip),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('退出', on_tray_exit)
+        )
+        
+        tray_icon = pystray.Icon('catdb', img, '豆包喵喵 - 搜索中...', menu)
+        threading.Thread(target=tray_icon.run, daemon=True).start()
+        logger.info('🐾 系统托盘已启动')
+        return True
+    except Exception as e:
+        logger.warning(f'创建系统托盘失败: {e}')
+        return False
+
+# 搜索超时检查线程
+def search_timeout_check():
+    """启动后 10 秒内如果没有手机连接，则弹出二维码窗口"""
+    global search_status, search_start_time
+    search_start_time = time.time()
+    
+    while True:
+        time.sleep(1)
+        elapsed = time.time() - search_start_time
+        
+        # 有手机连接了，不需要弹窗
+        if len(connected_clients) > 0:
+            search_status = "connected"
+            update_tray_status('已连接')
+            close_qr_window()  # 如果 QR 窗口开着，关闭它
+            continue
+        
+        # 超过 10 秒没有连接，弹出二维码
+        if elapsed >= QR_TIMEOUT and search_status == "searching":
+            search_status = "qr_showed"
+            update_tray_status('等待扫码')
+            threading.Thread(target=show_qr_window, daemon=True).start()
+
+import os
+
+# ============== 主入口 ==============
 async def main():
-    global main_loop
+    global main_loop, search_start_time
     main_loop = asyncio.get_event_loop()
+    search_start_time = time.time()
+    
     app = web.Application()
     app.router.add_get('/', handle_index)
     app.router.add_get('/ws', handle_websocket)
+    app.router.add_get('/qr', handle_qr)
     runner = web.AppRunner(app)
     await runner.setup()
     port = CONFIG.get('port', 5000)
     await web.TCPSite(runner, '0.0.0.0', port).start()
     
-    print('='*50 + f'\n🚀 豆包喵喵服务已启动\n📱 手机访问: http://{get_local_ip()}:{port}\n' + '='*50)
+    # Zeroconf 服务注册
+    try:
+        from zeroconf import Zeroconf, ServiceInfo
+        zc = Zeroconf()
+        info = ServiceInfo(
+            '_catdb._tcp.local.',
+            f'CatDB._catdb._tcp.local.',
+            addresses=[socket.inet_aton(get_local_ip())],
+            port=port,
+            properties={'path': '/'},
+        )
+        zc.register_service(info)
+        logger.info('🔍 Zeroconf 服务已注册')
+    except Exception as e:
+        logger.warning(f'Zeroconf 注册失败: {e}')
+    
+    ip = get_local_ip()
+    logger.info(f'🚀 豆包喵喵服务已启动')
+    logger.info(f'📱 手机访问: http://{ip}:{port}')
+    logger.info(f'⏳ 等待手机连接... ({QR_TIMEOUT}秒后显示二维码)')
+    
+    # 启动快捷键监听
     setup_hotkey()
-    while True: await asyncio.sleep(3600)
+    
+    # 启动搜索超时检查线程
+    threading.Thread(target=search_timeout_check, daemon=True).start()
+    
+    # 启动系统托盘
+    create_tray_icon()
+    
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == '__main__':
-    try: asyncio.run(main())
-    except KeyboardInterrupt: print('\n👋 喵喵休息了')
+    try:
+        parse_args()
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info('👋 喵喵休息了')
