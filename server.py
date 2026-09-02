@@ -46,11 +46,38 @@ CONFIG = {
 
 def parse_args():
     parser = argparse.ArgumentParser(description='豆包喵喵 - 手机语音输入 → 电脑实时上屏')
-    parser.add_argument('--port', type=int, default=5000, help='服务端口 (默认: 5000)')
+    parser.add_argument('--port', type=int, default=5000, help='初始端口 (默认: 5000)')
     parser.add_argument('--hotkey', type=str, default='f9', help='清空快捷键 (默认: f9)')
     args = parser.parse_args()
     CONFIG['port'] = args.port
     CONFIG['hotkey'] = args.hotkey
+
+# ============== 端口自动探测 ==============
+MAX_PORT_ATTEMPTS = 20  # 最多尝试20个端口
+
+def check_port_available(host, port):
+    """
+    使用原生 socket 检测端口是否可用。
+    返回 True 表示端口空闲，False 表示已被占用。
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.1)  # 100ms 超时，快速检测
+            s.bind((host, port))
+            return True
+    except OSError:
+        return False
+
+def find_available_port(start_port, host='0.0.0.0', max_attempts=MAX_PORT_ATTEMPTS):
+    """
+    从 start_port 开始，依次向下探测可用端口。
+    返回第一个可用端口号；若全部占满则返回 None。
+    """
+    for offset in range(max_attempts):
+        candidate = start_port + offset
+        if check_port_available(host, candidate):
+            return candidate
+    return None
 
 pyautogui.PAUSE = 0
 pyautogui.FAILSAFE = False  # 远程触控板控制场景，禁用左上角安全保护（否则移动到角落会抛异常）
@@ -1608,14 +1635,29 @@ async def main():
     main_loop = asyncio.get_event_loop()
     search_start_time = time.time()
     
+    # 端口自动探测
+    desired_port = CONFIG.get('port', 5000)
+    actual_port = find_available_port(desired_port)
+    
+    if actual_port is None:
+        logger.error(f'❌ 无法找到可用端口：从 {desired_port} 起的 {MAX_PORT_ATTEMPTS} 个端口均被占用')
+        logger.error('请关闭占用端口的程序，或使用 --port 指定其他起始端口')
+        return
+    
+    if actual_port != desired_port:
+        logger.warning(f'[INFO] 原始端口{desired_port}被占用，已自动切换至可用端口: {actual_port}')
+    else:
+        logger.info(f'[INFO] 端口 {actual_port} 可用')
+    
+    CONFIG['port'] = actual_port  # 更新全局配置为实际使用的端口
+    
     app = web.Application()
     app.router.add_get('/', handle_index)
     app.router.add_get('/ws', handle_websocket)
     app.router.add_get('/qr', handle_qr)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = CONFIG.get('port', 5000)
-    await web.TCPSite(runner, '0.0.0.0', port).start()
+    await web.TCPSite(runner, '0.0.0.0', actual_port).start()
     
     # Zeroconf 服务注册
     try:
@@ -1625,7 +1667,7 @@ async def main():
             '_catdb._tcp.local.',
             f'CatDB._catdb._tcp.local.',
             addresses=[socket.inet_aton(get_local_ip())],
-            port=port,
+            port=actual_port,
             properties={'path': '/'},
         )
         zc.register_service(info)
@@ -1633,9 +1675,12 @@ async def main():
     except Exception as e:
         logger.warning(f'Zeroconf 注册失败: {e}')
     
-    ip = get_local_ip()
-    logger.info(f'🚀 豆包喵喵服务已启动')
-    logger.info(f'📱 手机访问: http://{ip}:{port}')
+    local_ip = get_local_ip()
+    logger.info('='*50)
+    logger.info('🚀 豆包喵喵服务已启动')
+    logger.info(f'   本机访问：http://127.0.0.1:{actual_port}')
+    logger.info(f'   局域网其他设备访问：http://{local_ip}:{actual_port}')
+    logger.info('='*50)
     logger.info(f'⏳ 等待手机连接... ({QR_TIMEOUT}秒后显示二维码)')
     
     # 启动快捷键监听
