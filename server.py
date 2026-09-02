@@ -143,7 +143,7 @@ HTML_PAGE = '''<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>豆包喵喵</title>
-    <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+    <!-- 移除 Google Fonts 硬依赖，改用系统字体栈 -->
     <style>
         :root {
             --bg-color: #FFF9F0;
@@ -162,7 +162,7 @@ HTML_PAGE = '''<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
         
         body {
-            font-family: 'ZCOOL KuaiLe', cursive, sans-serif;
+            font-family: 'ZCOOL KuaiLe', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'WenQuanYi Micro Hei', sans-serif;
             background-color: var(--bg-color);
             color: var(--text-main);
             height: 100vh;
@@ -367,7 +367,7 @@ HTML_PAGE = '''<!DOCTYPE html>
         textarea {
             flex: 1; width: 100%; border: none; outline: none; resize: none;
             background: transparent;
-            font-family: 'ZCOOL KuaiLe', cursive;
+            font-family: 'ZCOOL KuaiLe', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'WenQuanYi Micro Hei', sans-serif;
             font-size: 22px; /* 字体稍微减小以匹配密行距 */
             color: var(--text-main);
             line-height: var(--line-height);
