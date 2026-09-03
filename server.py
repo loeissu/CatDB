@@ -104,10 +104,12 @@ def parse_args():
     parser.add_argument('--port', type=int, default=5000, help='初始端口 (默认: 5000)')
     parser.add_argument('--hotkey', type=str, default='f9', help='清空快捷键 (默认: f9)')
     parser.add_argument('--max-port-attempts', type=int, default=20, help='最大端口尝试次数 (默认: 20)')
+    parser.add_argument('--minimized', action='store_true', help='最小化启动（开机自启模式，不显示窗口）')
     args = parser.parse_args()
     CONFIG['port'] = args.port
     CONFIG['hotkey'] = args.hotkey
     CONFIG['max_port_attempts'] = args.max_port_attempts
+    CONFIG['minimized'] = args.minimized
 
 # ============== 端口自动探测 ==============
 def check_port_available(host, port):
@@ -1823,9 +1825,163 @@ async def main():
     await runner.cleanup()
     logger.info('👋 喵喵休息了')
 
+# ============== 桌面 GUI 集成 ==============
+class WebviewAPI:
+    """给 pywebview 暴露的 API"""
+    
+    def start_service(self):
+        global main_loop
+        if main_loop:
+            asyncio.run_coroutine_threadsafe(start_service_async(), main_loop)
+        return {"success": True}
+    
+    def stop_service(self):
+        global main_loop
+        if main_loop:
+            asyncio.run_coroutine_threadsafe(stop_service_async(), main_loop)
+        return {"success": True}
+    
+    def get_service_status(self):
+        return {"success": True, "running": True}
+    
+    def get_auto_start(self):
+        try:
+            import json
+            with open('config.json', 'r') as f:
+                config = json.load(f)
+            return {"success": True, "enabled": config.get('auto_start', False)}
+        except:
+            return {"success": True, "enabled": False}
+    
+    def set_auto_start(self, enabled):
+        try:
+            import json
+            config = {}
+            try:
+                with open('config.json', 'r') as f:
+                    config = json.load(f)
+            except:
+                pass
+            config['auto_start'] = enabled
+            with open('config.json', 'w') as f:
+                json.dump(config, f)
+            if platform.system() == 'Windows' and enabled:
+                self._add_to_startup()
+            elif platform.system() == 'Windows' and not enabled:
+                self._remove_from_startup()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _add_to_startup(self):
+        if platform.system() == 'Windows':
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "CatDB", 0, winreg.REG_SZ, f'"{sys.executable}" --minimized')
+            winreg.CloseKey(key)
+        
+    def _remove_from_startup(self):
+        if platform.system() == 'Windows':
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+                winreg.DeleteValue(key, "CatDB")
+                winreg.CloseKey(key)
+            except:
+                pass
+    
+    def get_ip_list(self):
+        ips = []
+        try:
+            import netifaces
+            for iface in netifaces.interfaces():
+                addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
+                for addr in addrs:
+                    ip = addr.get('addr', '')
+                    if ip and not ip.startswith('127.'):
+                        ips.append(ip)
+        except:
+            try:
+                hostname = socket.gethostname()
+                ips = socket.gethostbyname_ex(hostname)[2]
+                ips = [ip for ip in ips if not ip.startswith('127.')]
+            except:
+                ips = ['127.0.0.1']
+        return {"success": True, "ips": ips}
+    
+    def get_port(self):
+        return {"success": True, "port": CONFIG.get('port', 5000)}
+    
+    def copy_to_clipboard(self, text):
+        try:
+            pyperclip.copy(text)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def refresh_qr(self):
+        return {"success": True}
+    
+    def open_shortcut_settings(self):
+        return {"success": True}
+    
+    def get_recent_logs(self):
+        return {"success": True, "logs": []}
+    
+    def minimize_window(self):
+        return {"success": True}
+    
+    def hide_window(self):
+        return {"success": True}
+
+# API 实例
+webview_api = WebviewAPI()
+
+# 异步启动/停止服务
+async def start_service_async():
+    return True
+
+async def stop_service_async():
+    shutdown_event.set()
+    return True
+
+# ============== 修改主入口 ==============
 if __name__ == '__main__':
+    import sys
+    
+    # 检查是否以最小化模式启动（开机自启）
+    minimized = '--minimized' in sys.argv
+    
     try:
         parse_args()
-        asyncio.run(main())
+        
+        # 如果是最小化启动，只运行后台服务
+        if minimized:
+            asyncio.run(main())
+        else:
+            # 正常启动：启动桌面 GUI
+            webview.create_window(
+                '豆包喵喵',
+                'desktop.html',
+                width=920,
+                height=660,
+                min_size=(920, 660),
+                resizable=False,
+                frameless=False,
+                easy_drag=True,
+                on_top=False,
+                shadow=True,
+                js_api=webview_api
+            )
+            
+            # 启动后台服务线程
+            def run_backend():
+                asyncio.run(main())
+            
+            backend_thread = threading.Thread(target=run_backend, daemon=True)
+            backend_thread.start()
+            
+            # 启动 GUI（阻塞）
+            webview.start(debug=False)
     except KeyboardInterrupt:
         logger.info('👋 喵喵休息了')
