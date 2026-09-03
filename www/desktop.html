@@ -267,21 +267,20 @@
     .logs .line.error { color: #FF6961; }
     .logs .line.error .l { color: #FF6961; }
 
-    /* 手机实时输入预览条 */
-    .live-strip {
-        display: none; align-items: center; gap: 10px;
-        margin: 0 20px 12px; padding: 8px 14px;
-        background: var(--accent-soft); border: 1px solid #F3DFC0; border-radius: 12px;
+    /* 手机实时输入（集成在底部日志栏头部） */
+    .live-head {
+        display: none; align-items: center; gap: 7px;
+        font-family: var(--mono); font-size: 11.5px; color: #E8A33D;
+        min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        margin-right: auto;
     }
-    .live-strip .lb-caret {
-        flex-shrink: 0; width: 8px; height: 15px; border-radius: 2px;
-        background: var(--accent); animation: lbBlink 1s steps(1) infinite;
+    .live-head::before {
+        content: ""; width: 7px; height: 7px; border-radius: 50%;
+        background: var(--accent); flex-shrink: 0; animation: lbBlink 1s steps(1) infinite;
     }
-    .live-strip .lb-lbl { flex-shrink: 0; font-size: 11.5px; color: #A05A00; font-weight: 600; }
-    .live-strip .lb-txt {
-        flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-        font-family: var(--mono); font-size: 12.5px; color: #8A5A2B;
-    }
+    /* 空闲（手机已停止输入）：圆点停跳并转灰，但内容仍保留显示 */
+    .live-head.idle::before { animation: none; background: #C7A57F; opacity: .75; }
+    html[data-theme="dark"] .live-head.idle::before { background: #8E8E93; opacity: .6; }
     @keyframes lbBlink { 50% { opacity: 0; } }
 
     /* 弹窗 */
@@ -333,6 +332,51 @@
         .col.right { display: none; }
         .col.left { flex: 0 0 31%; }
     }
+
+    /* ===== 深色主题（桌面端） ===== */
+    html[data-theme="dark"] {
+        --bg: #16161A;
+        --card: #1F1F24;
+        --txt: #F2F2F7;
+        --txt2: #98989F;
+        --txt3: #636369;
+        --line: rgba(255,255,255,.09);
+        --hair: rgba(255,255,255,.07);
+        --accent: #FF9F0A;
+        --accent-soft: rgba(255,159,10,.18);
+        --green: #30D158;
+        --red: #FF453A;
+        --shadow: 0 1px 2px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.4);
+    }
+    html[data-theme="dark"] .topbar { background: rgba(30,30,34,.88); }
+    html[data-theme="dark"] .state-pill { background: rgba(255,255,255,.08); }
+    html[data-theme="dark"] .state-pill.on { background: rgba(48,209,88,.14); color: #30D158; }
+    html[data-theme="dark"] .state-pill.off { background: rgba(255,69,58,.14); color: #FF6961; }
+    html[data-theme="dark"] .state-pill .dot { background: #8E8E93; }
+    html[data-theme="dark"] .icon-btn { background: #2C2C31; border-color: var(--line); }
+    html[data-theme="dark"] .icon-btn:hover { background: #38383D; }
+    html[data-theme="dark"] .icon-btn .ic-sun { display: none; }
+    html[data-theme="dark"] .icon-btn .ic-moon { display: block; }
+    .icon-btn .ic-moon { display: none; }
+    html[data-theme="dark"] .menu { background: rgba(36,36,41,.97); }
+    html[data-theme="dark"] .menu-item:hover,
+    html[data-theme="dark"] .menu button.menu-btn:hover { background: #2C2C31; }
+    html[data-theme="dark"] .entry-btn { background: #2A2A2F; }
+    html[data-theme="dark"] .entry-btn:hover { background: #333338; }
+    html[data-theme="dark"] .addr-sheet { background: #2A2A2F; }
+    html[data-theme="dark"] .qr-frame { background: #1B1B1F; box-shadow: 0 4px 20px rgba(0,0,0,.3), inset 0 0 0 6px #1B1B1F, inset 0 0 0 7px var(--hair); }
+    html[data-theme="dark"] .modal { background: rgba(40,40,45,.98); border-color: rgba(255,255,255,.08); }
+    html[data-theme="dark"] .m-btn.sec { background: #3A3A3F; }
+    html[data-theme="dark"] .m-btn.sec:hover { background: #45454B; }
+    html[data-theme="dark"] .m-row select { background-color: #2C2C31; }
+    html[data-theme="dark"] .svc-chip { color: #FFB340; }
+    html[data-theme="dark"] .ip-tag { border-color: var(--line); background: #2A2A2F; }
+    html[data-theme="dark"] .ip-tag:hover { border-color: var(--accent); color: #FFB340; }
+    html[data-theme="dark"] .ip-tag.active { background: var(--accent-soft); color: #FFB340; }
+    html[data-theme="dark"] .copy-btn { background: #2C2C31; border: 1px solid var(--hair); color: #F2F2F7; }
+    html[data-theme="dark"] .copy-btn:hover { background: #38383D; }
+    html[data-theme="dark"] .copy-btn.copied { background: var(--green); color: #fff; }
+    html[data-theme="dark"] .live-head { color: #FFB340; }
 </style>
 </head>
 <body>
@@ -351,6 +395,15 @@
         <span>端口 <b id="topPort">—</b></span>
     </div>
     <div class="spacer"></div>
+    <button class="icon-btn" id="themeBtn" title="切换深色 / 浅色模式" aria-label="切换深浅色">
+        <svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="4.5"/>
+            <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/>
+        </svg>
+        <svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+        </svg>
+    </button>
     <div class="gear-wrap">
         <button class="icon-btn" id="gearBtn" title="更多设置" aria-label="更多设置">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -429,18 +482,12 @@
     </section>
 </main>
 
-<!-- 手机实时输入预览 -->
-<div class="live-strip" id="liveBar">
-    <span class="lb-caret"></span>
-    <span class="lb-lbl">📱 手机正在输入</span>
-    <span class="lb-txt" id="liveTxt"></span>
-</div>
-
 <!-- 日志 -->
 <footer class="logbar" id="logBar">
     <div class="loghead">
         <span class="lt">运行日志</span>
         <span class="sp"></span>
+        <span class="live-head" id="liveTxt"></span>
         <button class="clear-btn" id="logToggle" title="展开 / 收起日志">收起</button>
         <button class="clear-btn" id="clearLogsBtn">清空</button>
     </div>
@@ -570,13 +617,24 @@ function renderStatus() {
     renderLive();
 }
 
-/* 手机实时输入预览：最近 8 秒内有输入则显示，超时自动隐藏 */
+/* 手机实时输入：显示在底部日志栏头部，输入时实时刷新；
+   停止输入后内容保留不消失（仅退出客户端才清除）。 */
+let lastLiveTxt = '';
 function renderLive() {
-    const bar = $('liveBar');
+    const el = $('liveTxt');
     const txt = (S.live_typing || '').trim();
-    const fresh = !!txt && (Date.now() / 1000 - (S.live_typing_ts || 0)) < 8;
-    bar.style.display = fresh ? 'flex' : 'none';
-    if (fresh) $('liveTxt').textContent = txt;
+    // 约 3 秒内有新输入视为“正在输入”，之后转“最近输入”但内容保留
+    const active = !!txt && (Date.now() / 1000 - (S.live_typing_ts || 0)) < 3;
+    if (txt) lastLiveTxt = txt;
+    if (!lastLiveTxt) { // 本次运行从未收到过输入
+        el.style.display = 'none';
+        el.textContent = '';
+        el.classList.remove('idle');
+        return;
+    }
+    el.style.display = 'inline-flex';
+    el.classList.toggle('idle', !active);
+    el.textContent = (active ? '📱 正在输入：' : '📱 最近输入：') + lastLiveTxt;
 }
 
 function renderAddr(on) {
@@ -761,6 +819,45 @@ $('quitBtn').onclick = async () => {
         $('hkModal').classList.add('hidden');
     };
     $('hkModal').addEventListener('click', (e) => { if (e.target === $('hkModal')) $('hkModal').classList.add('hidden'); });
+})();
+
+/* ---------- 深浅色主题（桌面端，与手机端相互独立） ----------
+   记忆策略：本地 localStorage 优先；桥接（EXE file:// 模式）下同步到服务端
+   config.json，重启客户端/换端口也不丢；file:// 下 localStorage 可能抛错，全部 try/catch。 */
+(function () {
+    const KEY = 'desktopTheme';
+    const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    function getL() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
+    function setL(v) { try { localStorage.setItem(KEY, v); } catch (e) {} }
+    function sysTheme() { return (mq && mq.matches) ? 'dark' : 'light'; }
+    function apply(t) {
+        if (t !== 'dark' && t !== 'light') t = sysTheme();
+        document.documentElement.dataset.theme = t;
+    }
+    function toggle() {
+        const cur = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+        const next = cur === 'dark' ? 'light' : 'dark';
+        setL(next);
+        apply(next);
+        if (bridgeReady()) { try { window.pywebview.api.set_desktop_theme(next); } catch (e) {} }
+        toast(next === 'dark' ? '已切换深色模式' : '已切换浅色模式');
+    }
+    $('themeBtn').addEventListener('click', toggle);
+    if (mq) mq.addEventListener('change', () => { if (!getL()) apply(); });
+    // 本地记忆优先；无记忆且桥接可用时读服务端配置（重启/换端口不丢）
+    const t = getL();
+    if (t === 'dark' || t === 'light') {
+        apply(t);
+    } else if (bridgeReady()) {
+        apply(sysTheme());
+        try {
+            window.pywebview.api.get_desktop_theme().then(r => {
+                if (r && r.success && (r.theme === 'dark' || r.theme === 'light')) { apply(r.theme); setL(r.theme); }
+            });
+        } catch (e) {}
+    } else {
+        apply();
+    }
 })();
 
 /* ---------- 轮询 ---------- */

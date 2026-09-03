@@ -59,7 +59,6 @@
         html[data-theme="dark"] #imgStatus.ok { color: #8BE79A; }
         html[data-theme="dark"] #imgStatus.err { color: #FF9E96; }
         html[data-theme="dark"] .paper-card { box-shadow: 0 4px 15px rgba(0,0,0,.45); }
-        html[data-theme="dark"] .cam-badge { background: rgba(0,0,0,.55); }
         /* 主题跟随系统的过渡 */
         body { transition: background-color .25s; }
         .paper-card, .modal, .hotkey-bar { transition: background-color .25s, border-color .25s; }
@@ -155,8 +154,9 @@
             width: 130px; height: 85px;
             position: relative; display: flex; justify-content: center; align-items: flex-end;
             transform-origin: bottom center;
-            transform: scale(1.25);
-            /* 按钮上移后，微调猫咪向下保持爪子仍扒在纸卡顶部边缘 */
+            transform: scale(1.15);
+            /* 下移避免猫头与上方「使用帮助?」气泡重叠（图标/文字不重合） */
+            margin-top: 12px;
             margin-bottom: 8px;
         }
 
@@ -276,7 +276,7 @@
             font-size: 22px; /* 字体稍微减小以匹配密行距 */
             color: var(--text-main);
             line-height: var(--line-height);
-            padding: 0 16px;
+            padding: 0 16px 52px; /* 底部留 52px：最后一行文字不被左下/右下圆形按钮遮挡 */
             
             /* 顶部留白：paper-card已加6px顶部内边距，因此此处相应减小6px，保持与原总留白一致 */
             padding-top: calc(var(--header-height) - 6px);
@@ -298,7 +298,8 @@
         textarea::placeholder { color: #D7CCC8; font-size: 20px; }
 
         .info-bar {
-            text-align: right; padding: 5px 16px 0; font-size: 12px; color: #BCAAA4;
+            /* 左右各留 60px：避开左下触控板 / 右下拍照两个圆形按钮，防止文字与图标重叠 */
+            text-align: right; padding: 5px 60px 0; font-size: 12px; color: #BCAAA4;
             display: flex; justify-content: space-between;
         }
         /* 触控板手势说明：默认隐藏，触控板展开时显示在底部左侧 */
@@ -391,6 +392,21 @@
         .setting-input-wide { flex: 1; min-width: 0; padding: 6px 8px; border: 2px solid #EFEBE9; border-radius: 8px; font-family: inherit; font-size: 15px; color: var(--text-main); background: #fff; }
         .hk-empty { text-align: center; font-size: 12px; color: #BCAAA4; padding: 8px 0; }
 
+        /* 局域网扫描结果 */
+        .lan-item {
+            display: flex; align-items: center; gap: 8px;
+            background: #FFF9F0; border: 2px solid #FBE9E7; border-radius: 12px;
+            padding: 8px 10px; margin-bottom: 6px; cursor: pointer;
+        }
+        .lan-item:active { background: #FBE9E7; }
+        .lan-item .ip { font-family: Consolas, Menlo, monospace; font-size: 13px; color: var(--text-main); min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+        .lan-item .tag { margin-left: auto; flex-shrink: 0; font-size: 10px; color: #A1887F; border: 1px solid #D7CCC8; border-radius: 6px; padding: 0 5px; }
+        .lan-item.hot .tag { color: #2E7D32; border-color: #A5D6A7; background: #E8F5E9; }
+        html[data-theme="dark"] .lan-item { background: #251E18; border-color: #3B2E24; }
+        html[data-theme="dark"] .lan-item:active { background: #33291E; }
+        html[data-theme="dark"] .lan-item .tag { color: #C2AFA0; border-color: #463A2F; }
+        html[data-theme="dark"] .lan-item.hot .tag { color: #8BE79A; border-color: #1E3A24; background: #1E3A24; }
+
         /* === 触控板 === */
         .tp-fab {
             /* bottom 从 34px 调到 18px：向纸卡底部再下挪约16px，避免看起来悬空在上方 */
@@ -466,14 +482,6 @@
         .typing .cat-paw.right { animation: pawTapR .16s infinite alternate ease-out; animation-delay: .06s; }
         @keyframes pawTapL { from { transform: translateY(0) rotate(0deg); } to { transform: translateY(-7px) rotate(-6deg); } }
         @keyframes pawTapR { from { transform: translateY(0) rotate(0deg); } to { transform: translateY(-7px) rotate(6deg); } }
-        .cam-badge {
-            position: absolute; right: -6px; top: 6px; z-index: 30;
-            width: 22px; height: 22px; border-radius: 50%;
-            background: var(--accent-orange); color: #fff; font-size: 12px;
-            display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 2px 5px rgba(0,0,0,.25);
-        }
-
 
     </style>
 </head>
@@ -491,7 +499,7 @@
     <div class="control-area">
         <button class="capsule-btn" id="settingsBtn"><span>⚙️</span> 设置</button>
         
-        <div class="cat-wrapper" id="catAnim">
+        <div class="cat-wrapper" id="catAnim" title="点击发送图片到电脑">
             <div class="cat-head">
                 <div class="cat-ear left"></div>
                 <div class="cat-ear right"></div>
@@ -512,7 +520,6 @@
             </div>
             <div class="cat-paw left"></div>
             <div class="cat-paw right"></div>
-            <div class="cam-badge" id="camBadge" title="点我发送图片到电脑">📷</div>
         </div>
 
         <button class="capsule-btn clear" id="clearBtn"><span>🗑️</span> 清空</button>
@@ -587,6 +594,14 @@
                     <option value="light">浅色</option>
                     <option value="dark">深色</option>
                 </select>
+            </div>
+            <div class="setting-row" style="align-items:center;">
+                <span>局域网扫描</span>
+                <button class="hk-add-btn" id="lanScanBtn" style="flex-shrink:0;">🔍 扫描</button>
+            </div>
+            <div id="lanScanBox" style="display:none; margin:-6px 0 14px;">
+                <div id="lanScanStatus" style="font-size:11px; color:#BCAAA4; margin-bottom:6px; line-height:1.5;"></div>
+                <div id="lanScanList"></div>
             </div>
             <div class="hk-section">
                 <div class="hk-header">
@@ -1258,12 +1273,130 @@
                 flashImg('图片发送失败', 'err');
             }
         }
-        // 点小猫头像或红角标 = 从相册/文件选图；右下角📷 = 直接拍照/选图
+        // 点小猫头像 = 从相册/文件选图；右下角📷 = 直接拍照/选图
         $('catAnim').addEventListener('click', () => openImgPicker($('imgFile')));
-        $('camBadge').addEventListener('click', (e) => { e.stopPropagation(); openImgPicker($('imgFile')); });
         $('camFab').addEventListener('click', () => openImgPicker($('camFile')));
         $('imgFile').addEventListener('change', () => handleImageFile($('imgFile')));
         $('camFile').addEventListener('change', () => handleImageFile($('camFile')));
+
+        /* ---------- 局域网扫描：HTTP 快速探测识别运行 CatDB 的电脑 ---------- */
+        const lanScanBtn = $('lanScanBtn'), lanScanBox = $('lanScanBox'), lanScanStatus = $('lanScanStatus'), lanScanList = $('lanScanList');
+        let lanScanning = false;
+
+        async function lanProbe(ip, port, ms) {
+            const ctl = new AbortController();
+            const t = setTimeout(() => ctl.abort(), ms || 700);
+            try {
+                const r = await fetch('http://' + ip + ':' + port + '/api/status', { signal: ctl.signal, cache: 'no-store' });
+                if (!r.ok) return null;
+                const j = await r.json().catch(() => null);
+                if (j && j.success !== false && typeof j.version === 'string') {
+                    return { ip: ip, port: port, version: j.version, running: !!j.running };
+                }
+                return null;
+            } catch (e) { return null; } finally { clearTimeout(t); }
+        }
+        // 测试/调试钩子
+        window.__lan = { probe: lanProbe };
+
+        async function lanPool(items, worker, conc) {
+            const results = [];
+            let i = 0;
+            async function run() {
+                while (i < items.length) {
+                    const idx = i++;
+                    const r = await worker(items[idx], idx, items.length);
+                    if (r) results.push(r);
+                }
+            }
+            const n = Math.min(conc || 40, items.length || 1);
+            await Promise.all(Array.from({ length: n }, run));
+            return results;
+        }
+
+        function lanCandidatePorts() {
+            const ports = [];
+            for (let p = 5000; p <= 5010; p++) ports.push(p);
+            const cur = normalizeAddr((localStorage.getItem('serverAddr') || '') || (location.port ? location.host + ':' + location.port : ''));
+            const m = cur && cur.match(/:(\d+)$/);
+            if (m && ports.indexOf(parseInt(m[1], 10)) === -1) ports.push(parseInt(m[1], 10));
+            return ports;
+        }
+
+        async function lanLocalIps() {
+            if (!window.RTCPeerConnection) return [];
+            return new Promise(resolve => {
+                const ips = [];
+                let pc = null;
+                try { pc = new RTCPeerConnection({ iceServers: [] }); } catch (e) { resolve([]); return; }
+                const done = () => { try { if (pc) pc.close(); } catch (e) {} resolve(ips); };
+                const t = setTimeout(done, 1200);
+                pc.onicecandidate = e => {
+                    if (!e || !e.candidate) { clearTimeout(t); done(); return; }
+                    const m = String((e.candidate && e.candidate.candidate) || '').match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+                    if (m) {
+                        const ip = m[1];
+                        if (ip !== '127.0.0.1' && ip.indexOf('0.') !== 0) ips.push(ip);
+                    }
+                };
+                try {
+                    pc.createDataChannel('x');
+                    pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => { clearTimeout(t); done(); });
+                } catch (e) { clearTimeout(t); done(); }
+            });
+        }
+
+        lanScanBtn.addEventListener('click', async () => {
+            if (lanScanning) return;
+            lanScanning = true;
+            lanScanBtn.disabled = true;
+            lanScanBox.style.display = 'block';
+            lanScanList.innerHTML = '';
+            lanScanStatus.textContent = '正在获取本机网络…';
+
+            const subnets = new Set();
+            (await lanLocalIps()).forEach(ip => { const p = ip.split('.'); if (p.length === 4) subnets.add(p.slice(0, 3).join('.')); });
+            const saved = normalizeAddr(localStorage.getItem('serverAddr') || '');
+            if (saved) { const h = saved.split(':')[0]; const p = h.split('.'); if (p.length === 4) subnets.add(p.slice(0, 3).join('.')); }
+            if (location.hostname && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                const p = location.hostname.split('.'); if (p.length === 4) subnets.add(p.slice(0, 3).join('.'));
+            }
+            if (!subnets.size) { subnets.add('192.168.1'); subnets.add('192.168.0'); subnets.add('10.0.0'); }
+
+            const ips = [];
+            subnets.forEach(s => { for (let i = 1; i <= 254; i++) ips.push(s + '.' + i); });
+            const ports = lanCandidatePorts();
+            lanScanStatus.textContent = '扫描中… ' + ips.length + ' 台主机（' + subnets.size + ' 个子网）';
+
+            // 直接探测所有 主机×端口 组合（不做“先探5000”筛选：5000被占用时新版客户端可能在5001+，按5000筛选会漏掉）
+            const todo = [];
+            ips.forEach(ip => ports.forEach(port => todo.push([ip, port])));
+            lanScanStatus.textContent = '扫描中… ' + ips.length + ' 台主机 × ' + ports.length + ' 个端口';
+            const found = await lanPool(todo, async pair => lanProbe(pair[0], pair[1], 500), 60);
+
+            // 同 IP 多端口命中时全部列出（用户可区分新旧版本客户端）
+            const list = found.sort((a, b) => (a.ip + ':' + a.port).localeCompare(b.ip + ':' + b.port, undefined, { numeric: true }));
+            lanScanning = false;
+            lanScanBtn.disabled = false;
+
+            if (!list.length) {
+                lanScanStatus.textContent = '未发现 CatDB 电脑。请确认：手机与电脑同一 Wi-Fi、电脑端已启动服务、并放行防火墙；也可手动输入地址。';
+                return;
+            }
+            lanScanStatus.textContent = '发现 ' + list.length + ' 台 CatDB 电脑，点击即可连接：';
+            list.forEach(f => {
+                const row = document.createElement('div');
+                row.className = 'lan-item' + (f.running ? ' hot' : '');
+                row.innerHTML = '<span class="ip">' + f.ip + ':' + f.port + '</span><span class="tag">v' + f.version + (f.running ? ' · 运行中' : '') + '</span>';
+                row.onclick = () => {
+                    const addr = f.ip + ':' + f.port;
+                    localStorage.setItem('serverAddr', addr);
+                    serverAddrInput.value = addr;
+                    saveServerAddrAndConnect();
+                };
+                lanScanList.appendChild(row);
+            });
+        });
     })();
     </script>
 </body>

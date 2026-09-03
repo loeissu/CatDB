@@ -28,7 +28,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.4"
+__version__ = "2.2.5"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -1268,6 +1268,20 @@ class WebviewAPI:
         save_catdb_config(cfg)
         logger.info('触控板模式: %s', '开启' if touchpad_enabled else '关闭')
         return {"success": True, "touchpad_enabled": touchpad_enabled}
+
+    def get_desktop_theme(self):
+        """桌面端深浅色主题（存 %APPDATA%/CatDB/config.json，重启/换端口均保留）"""
+        return {"success": True, "theme": str(load_catdb_config().get('desktop_theme') or '')}
+
+    def set_desktop_theme(self, theme):
+        theme = str(theme or '').strip().lower()
+        if theme not in ('light', 'dark'):
+            return {"success": False, "error": "theme must be light/dark"}
+        cfg = load_catdb_config()
+        cfg['desktop_theme'] = theme
+        save_catdb_config(cfg)
+        logger.info('桌面主题：%s', '深色' if theme == 'dark' else '浅色')
+        return {"success": True, "theme": theme}
 
     def copy_to_clipboard(self, text):
         try:
