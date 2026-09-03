@@ -755,6 +755,28 @@
 
         let ws = null, lastSentText = '', totalSent = 0, ignoreLength = 0;
         let debounceTimer = null, autoClearTimer = null, autoClearCountdown = 0;
+        // 连接管理：重连退避（上限 15s，避免电脑离线时每 2s 空转）+ 保活心跳（探测半开死链）
+        let retryTimer = null, retryN = 0, hbTimer = null, lastPong = 0;
+
+        function hbStop() { if (hbTimer) { clearInterval(hbTimer); hbTimer = null; } }
+        function hbStart() {
+            hbStop();
+            lastPong = Date.now();
+            hbTimer = setInterval(() => {
+                if (ws && ws.readyState === 1) {
+                    try { ws.send(JSON.stringify({ type: 'ping' })); } catch (e) {}
+                    // 60s 内没收到 pong：判定链路已死（电脑关机/休眠/断网未发 RST），主动断开触发重连
+                    if (Date.now() - lastPong > 60000) { try { ws.close(); } catch (e) {} }
+                }
+            }, 20000);
+        }
+        function scheduleReconnect() {
+            hbStop();
+            if (retryTimer || !currentTarget()) return;
+            const d = Math.min(2000 * Math.pow(2, retryN), 15000);
+            retryN++;
+            retryTimer = setTimeout(() => { retryTimer = null; connect(); }, d);
+        }
 
         function connect() {
             const target = currentTarget();
@@ -762,19 +784,25 @@
                 status.textContent = '需设置地址'; status.className = 'status-badge disconnected';
                 return; // 无地址时静默等待用户输入，不做无效重连
             }
+            if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
             ws = new WebSocket(`ws://${target}/ws`);
             ws.onopen = () => {
+                retryN = 0;
                 status.textContent = '已连接'; status.className = 'status-badge connected';
-                ws.send(JSON.stringify({ type: 'config', detectKeyboard: detectKeyboardInput.checked }));
+                try { ws.send(JSON.stringify({ type: 'config', detectKeyboard: detectKeyboardInput.checked })); } catch (e) {}
+                hbStart();
             };
             ws.onclose = () => {
+                hbStop();
                 status.textContent = '断开重连中'; status.className = 'status-badge disconnected';
-                if (currentTarget()) setTimeout(connect, 2000);
+                scheduleReconnect();
             };
-            ws.onerror = () => ws.close();
+            ws.onerror = () => { try { ws.close(); } catch (e) {} };
             ws.onmessage = (e) => {
-                const data = JSON.parse(e.data);
-                if(data.type === 'clear') performClear();
+                let data;
+                try { data = JSON.parse(e.data); } catch (err) { return; }
+                if (data.type === 'pong') lastPong = Date.now();
+                else if(data.type === 'clear') performClear();
                 else if(data.type === 'clear_with_blur') performClearWithBlur();
                 else if(data.type === 'rebase') {
                     ignoreLength = input.value.length; lastSentText = ''; status.textContent = '电脑介入';

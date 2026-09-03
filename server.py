@@ -28,7 +28,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.5"
+__version__ = "2.2.6"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -478,9 +478,14 @@ def _set_image_clipboard(img):
 
     img = img.convert('RGBA')
     w, h = img.size
-    # 转 BGRA 自下而上（bottom-up DIB），兼容绝大多数粘贴目标
-    rows = [img.crop((0, y, w, y + 1)).tobytes('raw', 'BGRA') for y in range(h - 1, -1, -1)]
-    raw = b''.join(rows)
+    # 转 BGRA 自下而上（bottom-up DIB），兼容绝大多数粘贴目标。
+    # 用单块 bytearray 逐行累积，避免 rows 列表+join 产生两份全图拷贝，降低大图峰值内存
+    raw = bytearray(w * h * 4)
+    off = 0
+    for y in range(h - 1, -1, -1):
+        row = img.crop((0, y, w, y + 1)).tobytes('raw', 'BGRA')
+        raw[off:off + len(row)] = row
+        off += len(row)
     header = struct.pack('<LiiHHIIiiII', 40, w, h, 1, 32, 0, len(raw), 0, 0, 0, 0)
     size = len(header) + len(raw)
 
@@ -554,7 +559,9 @@ async def handle_index(req):
             content_type='text/html', status=500)
 async def handle_websocket(req):
     global synced_text, touchpad_enabled
-    ws = web.WebSocketResponse()
+    # heartbeat=30：服务端每 30s 发一次 ping 帧，收不到 pong 即判定死连接并关闭，
+    # 防止手机静默断线（杀进程/切网/休眠）后 ws 对象与任务长期滞留内存
+    ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(req)
     add_client(ws)
     logger.info('📱 手机已连接')
@@ -564,6 +571,12 @@ async def handle_websocket(req):
                 data = json.loads(msg.data)
                 if data.get('type') == 'config':
                     set_client_config(ws, {'detect_keyboard': data.get('detectKeyboard')})
+                elif data.get('type') == 'ping':
+                    # 客户端保活心跳：回复 pong，让手机端及时感知链路已死并重连
+                    try:
+                        await ws.send_json({'type': 'pong'})
+                    except Exception:
+                        pass
                 elif data.get('type') == 'diff':
                     global rebase_triggered, pending_strip_punctuation
                     new_txt = data.get('newText', '')
