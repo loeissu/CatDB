@@ -267,6 +267,23 @@
     .logs .line.error { color: #FF6961; }
     .logs .line.error .l { color: #FF6961; }
 
+    /* 手机实时输入预览条 */
+    .live-strip {
+        display: none; align-items: center; gap: 10px;
+        margin: 0 20px 12px; padding: 8px 14px;
+        background: var(--accent-soft); border: 1px solid #F3DFC0; border-radius: 12px;
+    }
+    .live-strip .lb-caret {
+        flex-shrink: 0; width: 8px; height: 15px; border-radius: 2px;
+        background: var(--accent); animation: lbBlink 1s steps(1) infinite;
+    }
+    .live-strip .lb-lbl { flex-shrink: 0; font-size: 11.5px; color: #A05A00; font-weight: 600; }
+    .live-strip .lb-txt {
+        flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        font-family: var(--mono); font-size: 12.5px; color: #8A5A2B;
+    }
+    @keyframes lbBlink { 50% { opacity: 0; } }
+
     /* 弹窗 */
     .overlay {
         position: fixed; inset: 0; background: rgba(0,0,0,.35);
@@ -412,6 +429,13 @@
     </section>
 </main>
 
+<!-- 手机实时输入预览 -->
+<div class="live-strip" id="liveBar">
+    <span class="lb-caret"></span>
+    <span class="lb-lbl">📱 手机正在输入</span>
+    <span class="lb-txt" id="liveTxt"></span>
+</div>
+
 <!-- 日志 -->
 <footer class="logbar" id="logBar">
     <div class="loghead">
@@ -430,7 +454,7 @@
         <p class="msub" style="text-align:left;line-height:1.9;font-size:13px;">
             ① 点击「启动服务」，右侧生成二维码与地址<br>
             ② 手机浏览器扫二维码即可连接（同一 Wi-Fi）<br>
-            ③ 安卓 App：设置中填入 电脑IP:端口，或用📷扫码<br>
+            ③ 安卓 App：设置中填入 电脑IP:端口 即可连接<br>
             ④ 连不上？放行 Windows 防火墙对 CatDB 的访问<br>
             ⑤ 端口被占用会自动换新端口，以界面显示为准
         </p>
@@ -509,7 +533,7 @@ async function postAction(body) {
 
 /* ---------- 状态 ---------- */
 let S = { running: false, port: 0, ip: '', ips: [], touchpad_enabled: true, hotkey: 'f9',
-          auto_start: false, version: '2.2.0' };
+          auto_start: false, version: '2.2.0', live_typing: '', live_typing_ts: 0 };
 let curIP = '';
 let toastTimer = null;
 let qrTimer = null;
@@ -543,6 +567,16 @@ function renderStatus() {
     $('hkCurrent').textContent = (S.hotkey || 'f9').toUpperCase();
     try { $('hkSelect').value = S.hotkey || 'f9'; } catch (e) {}
     $('autostartChk').checked = !!S.auto_start;
+    renderLive();
+}
+
+/* 手机实时输入预览：最近 8 秒内有输入则显示，超时自动隐藏 */
+function renderLive() {
+    const bar = $('liveBar');
+    const txt = (S.live_typing || '').trim();
+    const fresh = !!txt && (Date.now() / 1000 - (S.live_typing_ts || 0)) < 8;
+    bar.style.display = fresh ? 'flex' : 'none';
+    if (fresh) $('liveTxt').textContent = txt;
 }
 
 function renderAddr(on) {

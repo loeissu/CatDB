@@ -28,7 +28,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.3"
+__version__ = "2.2.4"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -76,6 +76,9 @@ def get_detect_keyboard_enabled():
         return any(c.get('detect_keyboard') for c in client_configs.values())
 
 synced_text = ""
+# 手机端实时输入预览：最新文本 + 时间戳（桌面 GUI 轮询展示，随时间过期自动消失）
+live_typing_text = ""
+live_typing_ts = 0.0
 main_loop = None
 typing_in_progress = False
 rebase_triggered = False  # 标记是否已触发增量模式，避免重复触发
@@ -549,24 +552,6 @@ async def handle_index(req):
             text='<meta charset="utf-8"><h3 style="font-family:sans-serif">豆包喵喵资源缺失</h3>'
                  '<p style="font-family:sans-serif">未找到 www/index.html，请检查安装是否完整。</p>',
             content_type='text/html', status=500)
-async def handle_vendor(req):
-    """提供 www/vendor/ 下的第三方前端库（如 jsQR.min.js）"""
-    import re
-    name = req.match_info.get('name', '')
-    if not re.fullmatch(r'[\w.\-]+', name or ''):
-        return web.Response(status=404)
-    try:
-        p = _resource_path(os.path.join('www', 'vendor', name))
-        if not os.path.isfile(p):
-            return web.Response(status=404)
-        ctype = 'application/javascript' if name.endswith('.js') else 'application/octet-stream'
-        with open(p, 'rb') as f:
-            body = f.read()
-        return web.Response(body=body, content_type=ctype, headers={'Cache-Control': 'no-store'})
-    except Exception as e:
-        logger.error('vendor 资源读取失败 %s: %s', name, e)
-        return web.Response(status=404)
-
 async def handle_websocket(req):
     global synced_text, touchpad_enabled
     ws = web.WebSocketResponse()
@@ -599,9 +584,11 @@ async def handle_websocket(req):
                         type_text(add_txt)
                         logger.debug(f'⌨️ {add_txt!r}')
                     synced_text = new_txt
+                    update_live_typing(new_txt)
                 elif data.get('type') == 'reset':
                     synced_text = ""
                     pending_strip_punctuation = True  # 清空后下次输入需要检查标点
+                    clear_live_typing()
                     logger.info('🔄 重置')
                 elif data.get('type') == 'shortcut':
                     # 手机端自定义快捷键：按键组合 / 内置动作 / 启动脚本
@@ -651,6 +638,17 @@ async def broadcast_rebase():
         try: await ws.send_json({'type': 'rebase'})
         except: pass
 
+def update_live_typing(txt):
+    """手机端输入实时预览：记录最新文本与时间戳，桌面 GUI 轮询后同步显示"""
+    global live_typing_text, live_typing_ts
+    live_typing_text = txt or ''
+    live_typing_ts = time.time()
+
+def clear_live_typing():
+    global live_typing_text, live_typing_ts
+    live_typing_text = ''
+    live_typing_ts = 0.0
+
 def reset_synced_text():
     global synced_text, rebase_triggered, pending_strip_punctuation
     if typing_in_progress: return
@@ -659,6 +657,7 @@ def reset_synced_text():
         synced_text = ""
         rebase_triggered = True  # 标记已触发
         pending_strip_punctuation = True  # 下次输入需要检查标点
+        clear_live_typing()
         logger.info('🔄 电脑端输入，触发增量同步')
         if main_loop: asyncio.run_coroutine_threadsafe(broadcast_rebase(), main_loop)
 
@@ -898,6 +897,8 @@ def build_status_payload():
         'auto_start': bool(load_catdb_config().get('auto_start', False)),
         'service_name': 'CatDB (_catdb._tcp.local.)',
         'version': __version__,
+        'live_typing': live_typing_text,
+        'live_typing_ts': live_typing_ts,
     }
 
 # ============== HTTP JSON API（浏览器模式 / 调试用，pywebview 走 window.pywebview.api） ==============
@@ -996,8 +997,6 @@ def _start_service_inner():
         app.router.add_get('/ws', handle_websocket)
         app.router.add_get('/qr', handle_qr)
         app.router.add_get('/desktop.html', handle_desktop)
-        # 第三方前端库（浏览器 http 模式访问手机页时加载 jsQR 等）
-        app.router.add_get('/vendor/{name}', handle_vendor)
         # JSON API（浏览器模式的桌面 GUI 使用；pywebview 模式走 window.pywebview.api）
         app.router.add_get('/api/status', handle_api_status)
         app.router.add_get('/api/logs', handle_api_logs)

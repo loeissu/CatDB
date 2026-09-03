@@ -39,25 +39,25 @@
         html[data-theme="dark"] .capsule-btn,
         html[data-theme="dark"] .hotkey-chip,
         html[data-theme="dark"] .tp-fab,
-        html[data-theme="dark"] .tp-footer button,
-        html[data-theme="dark"] .img-mini,
-        html[data-theme="dark"] .conn-card input {
+        html[data-theme="dark"] .cam-fab,
+        html[data-theme="dark"] .tp-footer button {
             background: #2A221C; border-color: #463A2F; color: var(--text-main);
             box-shadow: 0 3px 0 #191310;
         }
         html[data-theme="dark"] .hotkey-bar { background: rgba(20,16,13,.94); border-color: #3B2E24; }
         html[data-theme="dark"] .modal { background: #1E1813; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
         html[data-theme="dark"] .modal-btn.plain, html[data-theme="dark"] .setting-input,
-        html[data-theme="dark"] .setting-input-wide, html[data-theme="dark"] .conn-card select,
         html[data-theme="dark"] .paper-card { border-color: #3B2E24; }
-        html[data-theme="dark"] .setting-input, html[data-theme="dark"] .setting-input-wide,
-        html[data-theme="dark"] .conn-card select, html[data-theme="dark"] .conn-card input { background:#2A221C; color: var(--text-main); }
+        html[data-theme="dark"] .setting-input, html[data-theme="dark"] .setting-input-wide { background:#2A221C; color: var(--text-main); }
         html[data-theme="dark"] .hk-item { background: #251E18; border-color: #3B2E24; }
         html[data-theme="dark"] .tp-surface { background: #241E18; border-color: #6E4C2E; }
         html[data-theme="dark"] .tp-surface.active { background: #33291E; }
         html[data-theme="dark"] .tp-hint, html[data-theme="dark"] .info-bar { color: #8A7463; }
         html[data-theme="dark"] textarea::placeholder { color: #6B5A4B; }
         html[data-theme="dark"] .help-bubble { border-color: #463A2F; }
+        html[data-theme="dark"] #imgStatus { color: #C2AFA0; }
+        html[data-theme="dark"] #imgStatus.ok { color: #8BE79A; }
+        html[data-theme="dark"] #imgStatus.err { color: #FF9E96; }
         html[data-theme="dark"] .paper-card { box-shadow: 0 4px 15px rgba(0,0,0,.45); }
         html[data-theme="dark"] .cam-badge { background: rgba(0,0,0,.55); }
         /* 主题跟随系统的过渡 */
@@ -402,6 +402,29 @@
             display: flex; align-items: center; justify-content: center;
         }
         .tp-fab:active { transform: translateY(3px); box-shadow: none; }
+        /* 拍照按钮：与左侧触控板按钮同高、右侧对称、同款圆形 */
+        .cam-fab {
+            position: absolute; right: 10px; bottom: 18px; z-index: 5;
+            width: 42px; height: 42px; border-radius: 50%;
+            background: #fff; border: 2px solid #EFEBE9;
+            box-shadow: 0 3px 0 #D7CCC8;
+            font-size: 18px; line-height: 1; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .cam-fab:active { transform: translateY(3px); box-shadow: none; }
+        /* 触控板页返回输入按钮 */
+        .tp-close {
+            display: inline-flex; align-items: center; gap: 4px;
+            background: var(--accent-orange); color: #fff; border: none;
+            border-radius: 17px; padding: 0 14px; height: 30px;
+            font-size: 13px; font-family: inherit; cursor: pointer;
+            box-shadow: 0 3px 0 #EF6C00; flex-shrink: 0;
+        }
+        .tp-close:active { transform: translateY(3px); box-shadow: none; }
+        /* 图片发送状态提示（输入框底部信息条内） */
+        #imgStatus { color: var(--text-light); }
+        #imgStatus.ok { color: #2E7D32; }
+        #imgStatus.err { color: #C62828; }
         .tp-pad { display: none; flex: 1; flex-direction: column; min-height: 0; }
         .tp-pad.open { display: flex; }
         .tp-header {
@@ -451,55 +474,7 @@
             box-shadow: 0 2px 5px rgba(0,0,0,.25);
         }
 
-        /* 原生 App 快捷连接栏 */
-        .conn-card {
-            display: none; align-items: center; gap: 7px;
-            padding: 0 2px 10px; flex-shrink: 0;
-        }
-        body.native .conn-card { display: flex; }
-        .conn-card input {
-            flex: 1; min-width: 0; padding: 8px 11px;
-            border: 2px solid #EFEBE9; border-radius: 13px;
-            background: #fff; color: var(--text-main);
-            font-family: inherit; font-size: 14px;
-        }
-        .conn-btn {
-            flex-shrink: 0; border: none; border-radius: 13px;
-            background: var(--accent-orange); color: #fff;
-            font-size: 13px; padding: 8px 14px; font-family: inherit;
-            box-shadow: 0 3px 0 #EF6C00; cursor: pointer;
-        }
-        .conn-btn:active { transform: translateY(3px); box-shadow: none; }
-        .scan-btn {
-            flex-shrink: 0; border: none; border-radius: 13px;
-            background: #fff; border: 2px solid #EFEBE9; color: var(--text-main);
-            font-size: 17px; width: 38px; height: 38px;
-            display: flex; align-items: center; justify-content: center; cursor: pointer;
-        }
-        .scan-btn:active { transform: scale(.95); }
 
-        /* 图片发送工具条 */
-        .send-tool {
-            display: flex; align-items: center; gap: 8px;
-            padding: 2px 10px 6px; flex-shrink: 0;
-        }
-        .img-mini {
-            flex-shrink: 0; border: 2px solid #EFEBE9; background: #fff;
-            color: var(--text-main); border-radius: 12px;
-            font-size: 12px; font-family: inherit; padding: 5px 10px;
-            display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
-        }
-        .img-mini:active { transform: translateY(2px); }
-        .sent-chip {
-            display: none; align-items: center; gap: 6px;
-            background: #E8F5E9; border-radius: 10px; padding: 3px 8px 3px 3px;
-            font-size: 11px; color: #2E7D32; max-width: 46%;
-        }
-        .sent-chip img {
-            width: 22px; height: 22px; border-radius: 6px; object-fit: cover;
-        }
-        .sent-chip.dark { background: #1E3A24; color: #8BE79A; }
-        .sent-msg { font-size: 11px; color: #BCAAA4; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     </style>
 </head>
 <body>
@@ -543,28 +518,18 @@
         <button class="capsule-btn clear" id="clearBtn"><span>🗑️</span> 清空</button>
     </div>
 
-    <!-- 原生 App 快捷连接：扫码 / 手动填写电脑地址 -->
-    <div class="conn-card" id="connCard">
-        <button class="scan-btn" id="scanBtn" title="扫电脑端二维码连接">📷</button>
-        <input type="text" id="connAddr" placeholder="电脑 IP:端口，如 192.168.1.100:5000" inputmode="url" autocomplete="off">
-        <button class="conn-btn" id="connGo">连接</button>
-    </div>
-
     <div class="paper-card">
         <button class="tp-fab" id="tpFab" title="触控板">🖱️</button>
+        <button class="cam-fab" id="camFab" title="拍照/选图发送到电脑">📷</button>
         <textarea 
             id="input" 
             placeholder="点击这里，告诉猫猫你想写什么..."
             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
         ></textarea>
-        <div class="send-tool" id="sendTool">
-            <button class="img-mini" id="imgBtn">🖼️ 发图片</button>
-            <span class="sent-chip" id="sentChip"></span>
-            <span class="sent-msg" id="sentMsg"></span>
-        </div>
         <div class="tp-pad" id="tpPad">
             <div class="tp-header">
                 <span>🖱️ 触控板</span>
+                <button class="tp-close" id="tpClose">⌨️ 返回输入</button>
             </div>
             <div class="tp-surface" id="tpSurface">
                 <div class="tp-hint">在此滑动控制电脑鼠标</div>
@@ -580,6 +545,7 @@
         <div class="info-bar">
             <span id="tpHint">单指移动·轻点·双击·双指滚动/右键·双击拖拽</span>
             <span id="timer"></span>
+            <span id="imgStatus"></span>
             <span id="stats">已同步 0 字</span>
         </div>
     </div>
@@ -649,8 +615,8 @@
         </div>
     </div>
 
-    <!-- 相机/扫码隐藏入口 -->
-    <input type="file" id="scanFile" accept="image/*" capture="environment" style="display:none">
+    <!-- 拍照/选图隐藏入口 -->
+    <input type="file" id="camFile" accept="image/*" capture="environment" style="display:none">
     <input type="file" id="imgFile" accept="image/*" style="display:none">
 
     <!-- 快捷键编辑弹窗 -->
@@ -690,7 +656,6 @@
         </div>
     </div>
 
-    <script src="vendor/jsQR.min.js"></script>
     <script>
         const input = document.getElementById('input');
         const status = document.getElementById('status');
@@ -762,6 +727,12 @@
         serverAddrInput.value = savedServerAddr() || detectedServerAddr();
         document.getElementById('serverConnectBtn').onclick = saveServerAddrAndConnect;
         serverAddrInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveServerAddrAndConnect(); });
+        // 用户编辑完地址（失焦）即持久化；只有手动输入才会触发，绝不会被程序自动改写
+        serverAddrInput.addEventListener('change', () => {
+            const addr = normalizeAddr(serverAddrInput.value);
+            if (addr) { localStorage.setItem('serverAddr', addr); serverAddrInput.value = addr; }
+            else { localStorage.removeItem('serverAddr'); }
+        });
         // 未连接时点击状态徽标快速去设置地址
         document.getElementById('status').addEventListener('click', () => {
             if (!ws || ws.readyState !== WebSocket.OPEN) openModal('settingsModal');
@@ -1028,6 +999,7 @@
 
         // ============ 触控板模块 ============
         const tpFab = document.getElementById('tpFab');
+        const camFab = document.getElementById('camFab');
         const tpPad = document.getElementById('tpPad');
         const tpSurface = document.getElementById('tpSurface');
 
@@ -1035,6 +1007,7 @@
         function openTouchpad() {
             input.blur();
             tpFab.style.display = 'none';
+            camFab.style.display = 'none';
             input.style.display = 'none';
             tpPad.classList.add('open');
         }
@@ -1042,10 +1015,12 @@
             tpPad.classList.remove('open');
             input.style.display = '';
             tpFab.style.display = '';
+            camFab.style.display = '';
             requestAnimationFrame(() => requestAnimationFrame(() => input.focus()));
         }
         tpFab.addEventListener('click', openTouchpad);
         document.getElementById('tpMini').addEventListener('click', closeTouchpad);
+        document.getElementById('tpClose').addEventListener('click', closeTouchpad);
 
         // 触控板灵敏度（存 localStorage）
         function tpSensitivity() { return parseFloat(localStorage.getItem('tpSensitivity')) || 2; }
@@ -1200,8 +1175,6 @@
     (function () {
         const $ = id => document.getElementById(id);
         const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-        // 原生 App 或手机浏览器（触屏）都显示“扫码/手动地址”快捷连接卡
-        if (isNative || ('ontouchstart' in window)) document.body.classList.add('native');
 
         /* ---------- 深浅色主题（浅 / 深 / 跟随系统）+ 状态栏同步 ---------- */
         const themeSel = $('themeSel');
@@ -1211,8 +1184,6 @@
             if (pref !== 'light' && pref !== 'dark') pref = 'auto';
             const dark = pref === 'dark' || (pref === 'auto' && mq && mq.matches);
             document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-            const chip = $('sentChip');
-            if (chip) chip.classList.toggle('dark', dark);
             // 原生状态栏随主题：浅色=米色底+深色图标；深色=深底+浅图标
             try {
                 if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar) {
@@ -1228,63 +1199,7 @@
         themeSel.addEventListener('change', () => { localStorage.setItem('theme', themeSel.value); applyTheme(); });
         if (mq) mq.addEventListener('change', () => { if ((localStorage.getItem('theme') || 'auto') === 'auto') applyTheme(); });
         applyTheme();
-
-        /* ---------- 手动电脑地址：真正可改 + 扫码 + 双输入框联动 ---------- */
-        const connAddr = $('connAddr'), serverAddr = $('serverAddr');
-        function syncAddrs() {
-            connAddr.value = serverAddr.value = currentTarget();
-        }
-        connAddr.addEventListener('input', () => { serverAddr.value = connAddr.value; });
-        serverAddr.addEventListener('input', () => { connAddr.value = serverAddr.value; });
-        serverAddr.addEventListener('change', () => { if (serverAddr.value) { localStorage.setItem('serverAddr', normalizeAddr(serverAddr.value)); } });
-        connAddr.addEventListener('change', () => { if (connAddr.value) localStorage.setItem('serverAddr', normalizeAddr(connAddr.value)); });
-        function goConnect() {
-            serverAddr.value = connAddr.value;
-            saveServerAddrAndConnect();
-        }
-        $('connGo').onclick = goConnect;
-        connAddr.addEventListener('keydown', e => { if (e.key === 'Enter') goConnect(); });
-        syncAddrs();
-
-        /* ---------- 扫码连接：读图 → jsQR 解码 → 自动填地址并连接 ---------- */
-        $('scanBtn').onclick = () => $('scanFile').click();
-        $('scanFile').addEventListener('change', function () {
-            const file = this.files && this.files[0];
-            this.value = '';
-            if (!file) return;
-            const url = URL.createObjectURL(file);
-            const img = new Image();
-            img.onload = function () {
-                try {
-                    const c = document.createElement('canvas');
-                    c.width = img.width; c.height = img.height;
-                    c.getContext('2d').drawImage(img, 0, 0);
-                    const code = jsQR(c.getContext('2d').getImageData(0, 0, c.width, c.height).data, c.width, c.height);
-                    URL.revokeObjectURL(url);
-                    const txt = code && code.data ? code.data : '';
-                    const m = txt.match(/^https?:\/\/([^:/]+):?(\d+)?/i);
-                    if (m && m[1]) {
-                        const host = m[1];
-                        const port = m[2] || (location.port || '5000');
-                        connAddr.value = serverAddr.value = host + ':' + port;
-                        saveServerAddrAndConnect();
-                        status.textContent = '扫码成功，连接中'; status.className = 'status-badge disconnected';
-                    } else {
-                        status.textContent = '未识别到二维码'; status.className = 'status-badge disconnected';
-                    }
-                } catch (err) {
-                    status.textContent = '扫码失败'; status.className = 'status-badge disconnected';
-                }
-            };
-            img.onerror = () => { URL.revokeObjectURL(url); status.textContent = '图片读取失败'; };
-            img.src = url;
-        });
-
-        /* ---------- 图片发送到电脑（输入框按钮 + 点击小猫头像均可触发） ---------- */
-        function pickImage() { $('imgFile').click(); }
-        $('imgBtn').onclick = pickImage;
-        $('catAnim').onclick = pickImage;
-        $('camBadge').onclick = function (e) { e.stopPropagation(); pickImage(); };
+        /* ---------- 图片/拍照发送到电脑：点小猫头像=选图；右下角📷=拍照 ---------- */
 
         function fileToDataUrl(f) {
             return new Promise((res, rej) => {
@@ -1313,33 +1228,42 @@
                 im.src = dataUrl;
             });
         }
-        $('imgFile').addEventListener('change', async function () {
-            const file = this.files && this.files[0];
-            this.value = '';
+        // 输入框底部信息条的瞬时状态提示
+        let imgStatusTimer = null;
+        function flashImg(txt, kind) {
+            const el = $('imgStatus');
+            if (!el) return;
+            el.textContent = txt;
+            el.className = kind || '';
+            if (imgStatusTimer) clearTimeout(imgStatusTimer);
+            imgStatusTimer = setTimeout(() => { el.textContent = ''; el.className = ''; }, 3500);
+        }
+        function openImgPicker(inputEl) { if (inputEl) inputEl.click(); }
+        async function handleImageFile(inputEl) {
+            const file = inputEl.files && inputEl.files[0];
+            inputEl.value = '';
             if (!file) return;
             if (!ws || ws.readyState !== WebSocket.OPEN) {
-                status.textContent = '未连接电脑，请先连接'; status.className = 'status-badge disconnected';
+                status.textContent = '未连接电脑'; status.className = 'status-badge disconnected';
+                flashImg('未连接电脑，请先在设置里填地址', 'err');
                 return;
             }
-            const msg = $('sentMsg');
-            msg.textContent = '图片处理中…';
+            flashImg('图片处理中…');
             try {
                 const dataUrl = await downscale(await fileToDataUrl(file), 1600);
-                const chip = $('sentChip');
-                const im = new Image();
-                im.src = dataUrl;
-                chip.innerHTML = '';
-                chip.appendChild(im);
-                chip.style.display = 'inline-flex';
                 ws.send(JSON.stringify({ type: 'image', name: file.name || 'photo', data: dataUrl }));
-                msg.textContent = '已发送，电脑将粘贴到光标处 ✓';
-                status.textContent = '已发送图片'; status.className = 'status-badge connected';
+                flashImg('已发送，电脑粘贴到光标处 ✓', 'ok');
                 stopTypingAnim();
             } catch (err) {
-                msg.textContent = '图片发送失败：' + err;
+                flashImg('图片发送失败', 'err');
             }
-            setTimeout(() => { msg.textContent = ''; }, 4000);
-        });
+        }
+        // 点小猫头像或红角标 = 从相册/文件选图；右下角📷 = 直接拍照/选图
+        $('catAnim').addEventListener('click', () => openImgPicker($('imgFile')));
+        $('camBadge').addEventListener('click', (e) => { e.stopPropagation(); openImgPicker($('imgFile')); });
+        $('camFab').addEventListener('click', () => openImgPicker($('camFile')));
+        $('imgFile').addEventListener('change', () => handleImageFile($('imgFile')));
+        $('camFile').addEventListener('change', () => handleImageFile($('camFile')));
     })();
     </script>
 </body>
