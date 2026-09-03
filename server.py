@@ -28,7 +28,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.0"
+__version__ = "2.2.2"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -159,15 +159,31 @@ def get_local_ip():
     获取本机局域网 IP。
     优先使用 netifaces 遍历网卡，失败则回退到 socket 连接外网法，最终兜底 127.0.0.1。
     """
-    # 1. 优先使用 netifaces 遍历网卡（最可靠，无需外网）
+    # 1. 优先使用 netifaces 遍历网卡（最可靠，无需外网）。
+    #    先找局域网私网地址（192.168./10./172.16-31.），避免 VPN/虚拟网卡抢在前面
+    def _is_private(ip):
+        try:
+            parts = ip.split('.')
+            if len(parts) != 4:
+                return False
+            a, b = int(parts[0]), int(parts[1])
+            return a == 10 or a == 192 or (a == 172 and 16 <= b <= 31)
+        except Exception:
+            return False
     try:
         import netifaces
+        candidates = []
         for iface in netifaces.interfaces():
             addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
             for addr in addrs:
                 ip = addr.get('addr', '')
                 if ip and not ip.startswith('127.'):
-                    return ip
+                    candidates.append(ip)
+        for ip in candidates:
+            if _is_private(ip):
+                return ip
+        if candidates:
+            return candidates[0]
     except Exception:
         pass
     # 2. 回退：socket.gethostbyname_ex
@@ -644,6 +660,17 @@ def clear_log_buffer():
     with LOG_BUFFER_LOCK:
         LOG_BUFFER.clear()
 
+def _is_private_ip(ip):
+    """是否局域网私网地址（192.168.* / 10.* / 172.16-31.*），用于排序优选"""
+    try:
+        parts = ip.split('.')
+        if len(parts) != 4:
+            return False
+        a, b = int(parts[0]), int(parts[1])
+        return a == 10 or a == 192 or (a == 172 and 16 <= b <= 31)
+    except Exception:
+        return False
+
 def list_ips():
     ips = []
     try:
@@ -659,9 +686,13 @@ def list_ips():
             ips = [ip for ip in socket.gethostbyname_ex(hostname)[2] if not ip.startswith('127.')]
         except Exception:
             ips = []
-    if not ips:
-        ips = ['127.0.0.1']
-    return ips
+    # 去重 + 私网地址排前（避免 VPN/虚拟网卡抢在前面导致手机连不上）
+    seen = set()
+    dedup = [ip for ip in ips if not (ip in seen or seen.add(ip))]
+    dedup.sort(key=lambda ip: (0 if _is_private_ip(ip) else 1, ip))
+    if not dedup:
+        dedup = ['127.0.0.1']
+    return dedup
 
 def catdb_config_dir():
     """配置持久化目录：%APPDATA%/CatDB（Windows），否则仓库目录"""
@@ -719,6 +750,23 @@ def autostart_command():
     py = sys.executable
     script = os.path.abspath(__file__)
     return f'"{py}" "{script}" --minimized'
+
+_FILE_HANDLER = None
+
+def init_file_logging():
+    """把日志同时写入 %APPDATA%/CatDB/catdb.log，保证无控制台时也能排查问题"""
+    global _FILE_HANDLER
+    if _FILE_HANDLER is not None:
+        return
+    try:
+        path = os.path.join(catdb_config_dir(), 'catdb.log')
+        h = logging.FileHandler(path, encoding='utf-8')
+        h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+        h.setLevel(logging.INFO)
+        logger.addHandler(h)
+        _FILE_HANDLER = h
+    except Exception:
+        pass
 
 def build_status_payload():
     """桌面 GUI / 浏览器共用的状态负载"""
@@ -898,11 +946,17 @@ def _start_service_inner():
 
     service_state['loop'] = asyncio.new_event_loop()
     asyncio.set_event_loop(service_state['loop'])
-    service_state['loop'].run_until_complete(_serve())
     try:
-        service_state['loop'].close()
+        service_state['loop'].run_until_complete(_serve())
     except Exception:
-        pass
+        logger.exception('❌ 服务线程异常退出')
+        service_state['running'] = False
+        service_state['ready'].set()  # 让等待方立即返回，而不是干等 15s
+    finally:
+        try:
+            service_state['loop'].close()
+        except Exception:
+            pass
 
 def start_service_now():
     """同步启动服务（若未运行）。返回 (success, port)"""
@@ -1171,24 +1225,33 @@ def run_gui_mode():
         webview.create_window(
             "豆包喵喵",
             url,
-            width=920,
-            height=660,
-            min_size=(800, 600),
+            width=960,
+            height=680,
+            min_size=(820, 620),
             resizable=True,
             js_api=webview_api,
+            background_color='#F5F5F7',
         )
     except Exception as e:
-        logger.error('创建窗口失败: %s', e)
-        stop_service_now()
+        # 原生窗口创建失败时降级：浏览器打开桌面页 + 托盘常驻，保证功能可用
+        logger.error('创建桌面窗口失败，已降级为浏览器模式: %s', e)
+        try:
+            webbrowser.open(f'http://127.0.0.1:{CONFIG.get("port", 5000)}/desktop.html')
+        except Exception:
+            pass
+        run_tray_mode()
         return
 
-    webview.start(debug=False)
-    # 窗口关闭后停止后端，避免残留进程占端口
-    if service_is_running():
-        stop_service_now()
-    logger.info('👋 喵喵休息了')
+    try:
+        webview.start(debug=False)
+    finally:
+        # 窗口关闭后停止后端，避免残留进程占端口
+        if service_is_running():
+            stop_service_now()
+        logger.info('👋 喵喵休息了')
 
 def main():
+    init_file_logging()
     parse_args()
     load_persisted_prefs()
     minimized = CONFIG.get('minimized', False)

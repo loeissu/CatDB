@@ -1,12 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files
 block_cipher = None
+
+# pywebview 自带的原生 DLL（WebView2Loader / WinForms 互操作）与 js/dom 资源
+# 必须显式收集，否则冻结后的 EXE 无法创建桌面窗口
+webview_binaries = collect_dynamic_libs('webview')
+webview_datas = collect_data_files('webview')
 
 a = Analysis(
     ['server.py'],
     pathex=[],
-    binaries=[],
-    datas=[('www', 'www')],
+    binaries=webview_binaries,
+    datas=[('www', 'www')] + webview_datas,
     hiddenimports=[
         'webview', 'webview.platforms.edgechromium', 'webview.platforms.winforms', 'webview.platforms.mshtml',
         'pystray', 'pystray._win32',

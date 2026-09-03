@@ -6,345 +6,417 @@
 <title>豆包喵喵 · 控制台</title>
 <style>
     :root {
-        --bg: #F7F1E8;
-        --card: #FFFDF9;
-        --ink: #4E342E;
-        --ink-2: #8D6E63;
-        --line: #EADFD3;
-        --orange: #FFB74D;
-        --orange-dk: #EF6C00;
-        --green: #43A047;
-        --red: #E53935;
-        --dark: #1E1B1A;
-        --shadow: 0 6px 18px rgba(93,64,55,.10);
+        --bg: #F5F5F7;
+        --card: #FFFFFF;
+        --txt: #1D1D1F;
+        --txt2: #6E6E73;
+        --txt3: #AEAEB2;
+        --line: rgba(0,0,0,.07);
+        --hair: rgba(0,0,0,.05);
+        --accent: #FF9500;
+        --accent-soft: rgba(255,149,0,.14);
+        --green: #34C759;
+        --red: #FF3B30;
+        --mono: "SF Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+        --r-lg: 20px;
+        --r-md: 14px;
+        --shadow: 0 1px 2px rgba(0,0,0,.03), 0 8px 24px rgba(0,0,0,.05);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
-        font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+                     "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+                     "Microsoft YaHei", sans-serif;
         background: var(--bg);
-        color: var(--ink);
-        display: flex;
-        flex-direction: column;
+        color: var(--txt);
+        display: flex; flex-direction: column;
         overflow: hidden;
         user-select: none;
+        -webkit-font-smoothing: antialiased;
+        font-size: 14px;
     }
     button { font-family: inherit; cursor: pointer; }
+    ::selection { background: rgba(255,149,0,.25); }
 
-    /* ===== 顶部状态栏 ===== */
+    /* ===== 顶栏 ===== */
     .topbar {
-        flex: 0 0 auto;
-        height: 52px;
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        padding: 0 16px;
-        background: var(--card);
-        border-bottom: 1px solid var(--line);
-        box-shadow: var(--shadow);
+        flex: 0 0 auto; height: 56px;
+        display: flex; align-items: center; gap: 14px;
+        padding: 0 20px;
+        background: rgba(255,255,255,.86);
+        backdrop-filter: saturate(1.8) blur(20px);
+        -webkit-backdrop-filter: saturate(1.8) blur(20px);
+        border-bottom: 1px solid var(--hair);
         z-index: 20;
     }
-    .brand { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; }
-    .brand .cat { font-size: 20px; }
-    .ver {
-        font-size: 11px; color: #fff; background: var(--orange-dk);
-        border-radius: 10px; padding: 1px 8px; font-weight: 600; vertical-align: 2px;
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand .logo {
+        width: 30px; height: 30px; border-radius: 9px;
+        background: linear-gradient(135deg, #FFB340, #FF9500);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 17px; box-shadow: 0 2px 6px rgba(255,149,0,.35);
     }
-    .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
-    .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(67,160,71,.18); }
-    .dot.off { background: var(--red); box-shadow: 0 0 0 3px rgba(229,57,53,.15); }
-    .state-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink); }
-    .meta { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); }
-    .meta b { color: var(--ink); font-weight: 600; }
+    .brand .name { font-size: 16.5px; font-weight: 700; letter-spacing: .2px; }
+    .ver {
+        font-size: 10.5px; font-weight: 600; color: var(--accent);
+        background: var(--accent-soft); border-radius: 7px; padding: 2px 7px;
+        vertical-align: 2px;
+    }
+    .state-pill {
+        display: inline-flex; align-items: center; gap: 7px;
+        padding: 5px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+        background: rgba(0,0,0,.045); color: var(--txt2);
+        transition: background .2s, color .2s;
+    }
+    .state-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #B8B8BE; }
+    .state-pill.on  { background: rgba(52,199,89,.12); color: #1F8A3C; }
+    .state-pill.on .dot { background: var(--green); box-shadow: 0 0 0 3px rgba(52,199,89,.18); }
+    .state-pill.off { background: rgba(255,59,48,.1); color: #C1272D; }
+    .state-pill.off .dot { background: var(--red); box-shadow: 0 0 0 3px rgba(255,59,48,.15); }
+    .meta { display: flex; gap: 6px; font-size: 12px; color: var(--txt2); font-variant-numeric: tabular-nums; }
+    .meta b { color: var(--txt); font-weight: 600; }
+    .meta .sep { color: var(--txt3); }
     .spacer { flex: 1; }
 
-    /* 齿轮 */
-    .gear-wrap { position: relative; }
     .icon-btn {
-        width: 34px; height: 34px; border-radius: 10px;
-        border: 1px solid var(--line); background: #fff;
-        font-size: 16px; display: inline-flex; align-items: center; justify-content: center;
-        transition: background .12s;
+        width: 34px; height: 34px; border-radius: 50%;
+        border: 1px solid var(--line); background: #fff; color: var(--txt);
+        display: inline-flex; align-items: center; justify-content: center;
+        transition: background .15s, transform .1s;
+        box-shadow: 0 1px 3px rgba(0,0,0,.05);
     }
-    .icon-btn:hover { background: #FDF3E7; }
+    .icon-btn:hover { background: #F7F7F9; }
+    .icon-btn:active { transform: scale(.94); }
+    .icon-btn svg { width: 17px; height: 17px; }
+
+    /* 齿轮菜单 */
+    .gear-wrap { position: relative; }
     .menu {
-        position: absolute; right: 0; top: 42px;
-        background: var(--card); border: 1px solid var(--line);
-        border-radius: 12px; box-shadow: var(--shadow);
-        width: 216px; padding: 8px; z-index: 60;
+        position: absolute; right: 0; top: 44px;
+        background: rgba(255,255,255,.96);
+        backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+        border: 1px solid var(--hair); border-radius: 16px;
+        box-shadow: 0 20px 50px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.06);
+        width: 232px; padding: 7px; z-index: 60;
     }
     .menu.hidden { display: none; }
-    .menu-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px; font-size: 13px; }
-    .menu-row:hover { background: #FBF4EA; }
-    .menu .sep { border-top: 1px solid var(--line); margin: 6px 4px; }
-    .menu .danger { color: var(--red); }
+    .menu-item {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        padding: 9px 12px; border-radius: 10px; font-size: 13.5px;
+    }
+    .menu-item:hover { background: #F5F5F7; }
+    .menu .msep { height: 1px; background: var(--hair); margin: 6px 8px; }
     .menu button.menu-btn {
         border: none; background: transparent; width: 100%; text-align: left;
-        font-size: 13px; color: var(--ink); padding: 8px 10px; border-radius: 8px;
+        font-size: 13.5px; color: var(--txt); padding: 9px 12px; border-radius: 10px;
+        display: flex; align-items: center; gap: 9px;
     }
-    .menu button.menu-btn:hover { background: #FBF4EA; }
-    .menu button.menu-btn.danger:hover { background: #FDECEA; color: var(--red); }
+    .menu button.menu-btn:hover { background: #F5F5F7; }
+    .menu button.menu-btn.danger { color: var(--red); }
+    .menu button.menu-btn.danger:hover { background: rgba(255,59,48,.08); }
+    .sub { font-size: 11px; color: var(--txt3); }
 
-    /* switch */
-    .switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+    /* macOS 风格开关 */
+    .switch { position: relative; display: inline-block; width: 42px; height: 25px; flex-shrink: 0; }
     .switch input { opacity: 0; width: 0; height: 0; }
-    .switch .sl {
-        position: absolute; inset: 0; border-radius: 22px;
-        background: #D7CCC8; transition: .18s;
+    .switch .track {
+        position: absolute; inset: 0; border-radius: 999px; background: rgba(120,120,128,.24);
+        transition: background .18s;
     }
-    .switch .sl:before {
-        content: ""; position: absolute; width: 16px; height: 16px;
-        left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .18s;
-        box-shadow: 0 1px 3px rgba(0,0,0,.25);
+    .switch .track:after {
+        content: ""; position: absolute; width: 21px; height: 21px; left: 2px; top: 2px;
+        background: #fff; border-radius: 50%; transition: transform .18s;
+        box-shadow: 0 2px 5px rgba(0,0,0,.25);
     }
-    .switch input:checked + .sl { background: var(--orange-dk); }
-    .switch input:checked + .sl:before { transform: translateX(18px); }
+    .switch input:checked + .track { background: var(--green); }
+    .switch input:checked + .track:after { transform: translateX(17px); }
 
-    /* ===== 主区三栏 ===== */
+    /* ===== 三栏主区 ===== */
     .cols {
         flex: 1 1 auto; min-height: 0;
-        display: flex; gap: 18px;
-        padding: 16px 18px;
+        display: flex; gap: 16px;
+        padding: 18px 20px;
     }
     .col {
-        background: var(--card); border: 1px solid var(--line);
-        border-radius: 16px; box-shadow: var(--shadow);
+        background: var(--card); border: 1px solid var(--hair);
+        border-radius: var(--r-lg); box-shadow: var(--shadow);
         display: flex; flex-direction: column; min-height: 0;
     }
-    .col.left  { flex: 0 0 25%; padding: 16px; gap: 14px; overflow-y: auto; }
-    .col.mid   { flex: 1 1 auto; padding: 18px; align-items: center; justify-content: center; overflow-y: auto; }
-    .col.right { flex: 0 0 30%; padding: 16px; gap: 14px; overflow-y: auto; }
+    .col.left  { flex: 0 0 25%; padding: 18px; gap: 15px; overflow-y: auto; }
+    .col.mid   { flex: 1 1 auto; padding: 20px; align-items: center; justify-content: center; overflow-y: auto; }
+    .col.right { flex: 0 0 29%; padding: 18px; gap: 16px; overflow-y: auto; }
 
-    .card-title { font-size: 13px; color: var(--ink-2); font-weight: 600; letter-spacing: .5px; display:flex; align-items:center; gap:6px; }
-    .card-title::before { content:""; width: 4px; height: 13px; border-radius: 2px; background: var(--orange); }
+    .ct { font-size: 12px; font-weight: 600; color: var(--txt2); letter-spacing: .4px; text-transform: uppercase; }
 
-    /* 左栏 */
-    .pill-btn {
+    /* 启动胶囊按钮 */
+    .power-btn {
         width: 100%; border: none; border-radius: 999px;
-        padding: 13px 0; font-size: 16px; font-weight: 700; color: #fff;
-        background: linear-gradient(135deg, #66BB6A, #43A047);
-        box-shadow: 0 4px 0 #2E7D32; transition: .12s;
+        padding: 14px 0; font-size: 15.5px; font-weight: 700; color: #fff; letter-spacing: .3px;
+        background: linear-gradient(180deg, #34C759, #28A745);
+        box-shadow: 0 6px 16px rgba(52,199,89,.32), inset 0 1px 0 rgba(255,255,255,.25);
+        transition: transform .12s, box-shadow .12s, filter .2s;
     }
-    .pill-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #2E7D32; }
-    .pill-btn.stop { background: linear-gradient(135deg, #EF5350, #E53935); box-shadow: 0 4px 0 #B71C1C; }
-    .pill-btn.stop:active { box-shadow: 0 1px 0 #B71C1C; }
-    .row-opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
-    .hint { font-size: 12px; color: var(--ink-2); line-height: 1.55; }
-    .mini-hint { font-size: 11px; color: #BCAAA4; }
-    .sep-line { border: none; border-top: 1px dashed var(--line); }
-    .entry-btn {
-        border: 1px solid var(--line); background: #fff; border-radius: 10px;
-        width: 100%; padding: 9px 12px; text-align: left; font-size: 13px; color: var(--ink);
-        display: flex; align-items: center; gap: 8px; transition: background .12s;
-    }
-    .entry-btn:hover { background: #FDF3E7; }
+    .power-btn:hover { filter: brightness(1.04); }
+    .power-btn:active { transform: scale(.985); }
+    .power-btn.stop { background: linear-gradient(180deg, #FF5A4E, #E6352A); box-shadow: 0 6px 16px rgba(255,59,48,.3), inset 0 1px 0 rgba(255,255,255,.22); }
+    .power-btn:disabled { opacity: .6; }
 
-    /* 中栏（扫码区） */
-    .qr-card { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; max-width: 460px; }
+    .row-opt { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; font-weight: 500; }
+    .desc { font-size: 12px; color: var(--txt2); line-height: 1.55; }
+    .hsep { border: none; border-top: 1px solid var(--hair); }
+
+    .entry-btn {
+        border: none; background: #F5F5F7; border-radius: 12px;
+        width: 100%; padding: 10px 13px; text-align: left; font-size: 13.5px; color: var(--txt);
+        display: flex; align-items: center; gap: 9px; transition: background .15s;
+    }
+    .entry-btn:hover { background: #ECECEF; }
+    .entry-btn .chev { margin-left: auto; color: var(--txt3); font-size: 11px; }
+
+    /* 中部扫码 */
+    .qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 18px; width: 100%; max-width: 470px; }
     .qr-frame {
-        width: 290px; height: 290px; max-width: 100%; max-height: 100%;
-        border-radius: 18px; border: 3px solid var(--line);
-        background: #fff; display: flex; align-items: center; justify-content: center;
+        width: 300px; height: 300px; max-width: 92%;
+        border-radius: 24px; background: #fff;
+        border: 1px solid var(--hair);
+        box-shadow: 0 4px 20px rgba(0,0,0,.04), inset 0 0 0 6px #fff, inset 0 0 0 7px var(--hair);
+        display: flex; align-items: center; justify-content: center;
         position: relative; overflow: hidden;
     }
-    .qr-frame img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
-    .qr-frame.placeholder { background: #FBF5EC; }
-    .qr-ph { text-align: center; color: #BCAAA4; font-size: 13px; line-height: 1.8; }
-    .qr-ph .big { font-size: 40px; display: block; margin-bottom: 6px; }
-    .qr-tip { font-size: 12px; color: var(--ink-2); }
-    .addr-box {
-        background: #F6EFE4; border: 1px solid var(--line); border-radius: 12px;
-        padding: 10px 14px; width: 100%;
+    .qr-frame img { width: 100%; height: 100%; object-fit: contain; padding: 14px; }
+    .qr-ph { text-align: center; color: var(--txt3); font-size: 13px; line-height: 1.9; }
+    .qr-ph .big { font-size: 52px; display: block; margin-bottom: 8px; filter: saturate(.9); }
+    .qr-tip { font-size: 12px; color: var(--txt3); }
+
+    .addr-sheet {
+        width: 100%; background: #F5F5F7; border-radius: 16px; padding: 13px 16px;
     }
-    .addr-line { display: flex; align-items: center; gap: 10px; font-size: 15px; font-family: Consolas, monospace; font-weight: 600; }
-    .addr-line .lbl { font-size: 11px; color: var(--ink-2); font-family: inherit; font-weight: 400; }
-    .addr-sub { margin-top: 6px; font-size: 12px; color: var(--ink-2); font-family: Consolas, monospace; }
+    .addr-main { display: flex; align-items: center; gap: 12px; }
+    .addr-main .http {
+        font-family: var(--mono); font-size: 16px; font-weight: 600; letter-spacing: .2px;
+        color: var(--txt); word-break: break-all;
+    }
+    .addr-sub { margin-top: 7px; font-family: var(--mono); font-size: 11.5px; color: var(--txt2); }
     .copy-btn {
-        margin-left: auto; flex-shrink: 0; border: none; border-radius: 8px;
-        background: var(--orange); color: #fff; font-size: 12px; padding: 5px 12px;
-        box-shadow: 0 2px 0 var(--orange-dk); transition: .1s;
+        margin-left: auto; flex-shrink: 0; border: none; border-radius: 999px;
+        background: var(--txt); color: #fff; font-size: 12px; font-weight: 600;
+        padding: 6px 14px; transition: background .15s, transform .1s;
     }
-    .copy-btn:active { transform: translateY(2px); box-shadow: none; }
+    .copy-btn:hover { background: #000; }
+    .copy-btn:active { transform: scale(.96); }
+    .copy-btn.copied { background: var(--green); }
 
     /* 右栏 */
-    .svc-name {
-        background: #FFF4E3; border: 1px dashed var(--orange); border-radius: 10px;
-        padding: 9px 12px; font-size: 12px; color: var(--ink); font-family: Consolas, monospace;
+    .svc-chip {
+        display: inline-flex; align-items: center; gap: 8px;
+        background: var(--accent-soft); color: #A05A00;
+        border-radius: 10px; padding: 8px 12px; font-size: 12px; font-family: var(--mono);
     }
+    .svc-chip .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
     .ip-tags { display: flex; flex-wrap: wrap; gap: 8px; }
     .ip-tag {
-        border: 1.5px solid var(--line); background: #fff; border-radius: 999px;
-        padding: 5px 12px; font-size: 12.5px; font-family: Consolas, monospace;
-        transition: .12s;
+        border: 1px solid var(--line); background: #fff; border-radius: 999px;
+        padding: 6px 13px; font-size: 12.5px; font-family: var(--mono);
+        color: var(--txt); transition: all .15s;
     }
-    .ip-tag:hover { border-color: var(--orange); }
-    .ip-tag.active { border-color: var(--orange-dk); background: #FFECCC; color: var(--orange-dk); font-weight: 700; }
-    .fw-note { font-size: 11px; color: var(--ink-2); line-height: 1.6; }
+    .ip-tag:hover { border-color: var(--accent); color: #A05A00; }
+    .ip-tag.active { border-color: var(--accent); background: var(--accent-soft); color: #A05A00; font-weight: 700; }
+    .notes { font-size: 12px; color: var(--txt2); line-height: 1.75; }
+    .notes b { color: var(--txt); font-weight: 600; }
+    .mode-tag {
+        align-self: flex-start; font-size: 11px; color: var(--txt3);
+        border: 1px solid var(--hair); border-radius: 999px; padding: 3px 10px;
+    }
 
-    /* ===== 日志面板 ===== */
+    /* 日志 */
     .logbar {
         flex: 0 0 auto; display: flex; flex-direction: column;
-        margin: 0 18px 16px; background: var(--dark); border-radius: 14px;
-        box-shadow: var(--shadow); overflow: hidden;
-        resize: vertical; min-height: 96px; max-height: 260px; height: 148px;
+        margin: 0 20px 18px; background: #1E1E20; border-radius: 16px;
+        box-shadow: 0 2px 14px rgba(0,0,0,.08);
+        overflow: hidden; resize: vertical; min-height: 96px; max-height: 280px; height: 148px;
     }
     .loghead {
         flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-        padding: 6px 12px; background: #2A2522;
+        padding: 7px 14px; background: #2A2A2C;
     }
-    .loghead .lt { font-size: 12px; color: #CFC6BF; display: flex; align-items: center; gap: 6px; }
-    .loghead .lt::before { content: "▸"; color: var(--orange); }
+    .loghead .lt { font-size: 12px; color: #B8B8BE; display: flex; align-items: center; gap: 7px; font-weight: 600; }
+    .loghead .lt::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
     .loghead .sp { flex: 1; }
     .clear-btn {
-        border: none; background: transparent; color: #9E948C; font-size: 12px;
-        padding: 3px 8px; border-radius: 6px;
+        border: none; background: transparent; color: #8E8E93; font-size: 12px;
+        padding: 3px 9px; border-radius: 7px; transition: background .15s;
     }
-    .clear-btn:hover { background: #3A3330; color: #fff; }
+    .clear-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
     .logs {
-        flex: 1 1 auto; overflow-y: auto; padding: 6px 12px 10px;
-        font-family: Consolas, "Courier New", monospace; font-size: 12px;
-        line-height: 1.6; white-space: pre-wrap; word-break: break-all;
+        flex: 1 1 auto; overflow-y: auto; padding: 7px 14px 12px;
+        font-family: var(--mono); font-size: 12px; line-height: 1.65;
+        white-space: pre-wrap; word-break: break-all;
     }
-    .logs .line { color: #BDB4AC; }
-    .logs .line .t { color: #6E655D; margin-right: 8px; }
-    .logs .line.info .l { color: #79C9FF; margin-right: 8px; }
-    .logs .line.warn { color: #FFD54F; }
-    .logs .line.warn .l { color: #FFD54F; margin-right: 8px; }
-    .logs .line.error { color: #FF8A80; }
-    .logs .line.error .l { color: #FF8A80; margin-right: 8px; }
-    .logs::-webkit-scrollbar { width: 8px; }
-    .logs::-webkit-scrollbar-thumb { background: #4A423D; border-radius: 4px; }
+    .logs::-webkit-scrollbar { width: 9px; }
+    .logs::-webkit-scrollbar-thumb { background: #48484A; border-radius: 5px; border: 2px solid #1E1E20; }
     .logs::-webkit-scrollbar-track { background: transparent; }
+    .logs .line { color: #C7C7CC; }
+    .logs .line .t { color: #6E6E73; margin-right: 9px; }
+    .logs .line .l { margin-right: 9px; font-weight: 700; }
+    .logs .line.info .l { color: #64D2FF; }
+    .logs .line.warn { color: #FFD60A; }
+    .logs .line.warn .l { color: #FFD60A; }
+    .logs .line.error { color: #FF6961; }
+    .logs .line.error .l { color: #FF6961; }
 
-    /* ===== 弹窗 ===== */
+    /* 弹窗 */
     .overlay {
-        position: fixed; inset: 0; background: rgba(62,45,38,.4);
+        position: fixed; inset: 0; background: rgba(0,0,0,.35);
+        backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
         display: flex; align-items: center; justify-content: center; z-index: 100;
     }
     .overlay.hidden { display: none; }
     .modal {
-        background: var(--card); border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.25);
-        width: 420px; max-width: 92vw; padding: 20px;
+        background: rgba(250,250,252,.98); border-radius: 20px;
+        box-shadow: 0 30px 80px rgba(0,0,0,.28);
+        width: 400px; max-width: 92vw; padding: 22px;
+        border: 1px solid rgba(0,0,0,.05);
     }
-    .modal h3 { font-size: 16px; margin-bottom: 14px; text-align: center; }
-    .m-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 13.5px; }
-    .m-row select, .m-row input[type=text] {
-        flex: 1; padding: 7px 10px; border: 1.5px solid var(--line); border-radius: 8px;
-        font-family: inherit; font-size: 13.5px; color: var(--ink); background: #fff;
+    .modal h3 { font-size: 17px; font-weight: 700; margin-bottom: 4px; text-align: center; }
+    .modal .msub { text-align: center; font-size: 12px; color: var(--txt2); margin-bottom: 18px; }
+    .m-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 16px; }
+    .m-row select {
+        flex: 1; padding: 9px 12px; border: 1px solid var(--line); border-radius: 12px;
+        font-family: inherit; font-size: 14px; color: var(--txt); background: #fff;
+        appearance: none; -webkit-appearance: none;
+        background-image: linear-gradient(45deg, transparent 50%, var(--txt3) 50%), linear-gradient(135deg, var(--txt3) 50%, transparent 50%);
+        background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%;
+        background-size: 5px 5px; background-repeat: no-repeat;
     }
-    .m-actions { display: flex; justify-content: center; gap: 12px; margin-top: 16px; }
+    .m-actions { display: flex; justify-content: center; gap: 10px; margin-top: 8px; }
     .m-btn {
-        border: none; border-radius: 999px; padding: 9px 26px; font-size: 14px; font-weight: 600;
+        border: none; border-radius: 999px; padding: 10px 30px; font-size: 14px; font-weight: 600;
+        transition: transform .1s, filter .15s;
     }
-    .m-btn.pri { background: var(--orange); color: #fff; box-shadow: 0 3px 0 var(--orange-dk); }
-    .m-btn.sec { background: #EDE4D8; color: var(--ink); box-shadow: 0 3px 0 #CFC2B2; }
-    .m-btn:active { transform: translateY(2px); box-shadow: none; }
+    .m-btn:active { transform: scale(.97); }
+    .m-btn.pri { background: var(--accent); color: #fff; box-shadow: 0 4px 12px rgba(255,149,0,.35); }
+    .m-btn.pri:hover { filter: brightness(1.05); }
+    .m-btn.sec { background: #E8E8ED; color: var(--txt); }
+    .m-btn.sec:hover { background: #DEDEE3; }
 
     /* toast */
     #toast {
-        position: fixed; left: 50%; bottom: 170px; transform: translateX(-50%) translateY(20px);
-        background: #3B2E2A; color: #fff; font-size: 13px; padding: 8px 18px; border-radius: 999px;
-        opacity: 0; pointer-events: none; transition: .25s; z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,.3);
+        position: fixed; left: 50%; bottom: 182px; transform: translateX(-50%) translateY(16px);
+        background: rgba(28,28,30,.92); color: #fff; font-size: 13px; font-weight: 500;
+        padding: 9px 20px; border-radius: 999px;
+        opacity: 0; pointer-events: none; transition: .25s; z-index: 200;
+        backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,.25);
     }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-    @media (max-width: 900px) {
-        .col.left { flex: 0 0 30%; }
+    @media (max-width: 860px) {
         .col.right { display: none; }
+        .col.left { flex: 0 0 31%; }
     }
 </style>
 </head>
 <body>
 
-<!-- ===== 顶部状态栏 ===== -->
+<!-- 顶栏 -->
 <header class="topbar">
-    <div class="brand"><span class="cat">🐱</span>豆包喵喵<span class="ver" id="verTag">v2.2.0</span></div>
-    <div class="state-chip"><span class="dot off" id="dot"></span><span id="stateText">检测中…</span></div>
+    <div class="brand">
+        <span class="logo">🐱</span>
+        <span class="name">豆包喵喵</span>
+        <span class="ver" id="verTag">v2.2.0</span>
+    </div>
+    <span class="state-pill" id="statePill"><span class="dot"></span><span id="stateText">正在连接…</span></span>
     <div class="meta">
-        <span>IP <b id="topIp">--</b></span>
-        <span>端口 <b id="topPort">--</b></span>
+        <span>IP <b id="topIp">—</b></span>
+        <span class="sep">·</span>
+        <span>端口 <b id="topPort">—</b></span>
     </div>
     <div class="spacer"></div>
     <div class="gear-wrap">
-        <button class="icon-btn" id="gearBtn" title="更多设置">⚙️</button>
+        <button class="icon-btn" id="gearBtn" title="更多设置" aria-label="更多设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3.2"/>
+                <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.09a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/>
+            </svg>
+        </button>
         <div class="menu hidden" id="gearMenu">
-            <div class="menu-row">
-                <span>开机自启 <span class="mini-hint" id="autostartHint">(Windows)</span></span>
-                <label class="switch"><input type="checkbox" id="autostartChk"><span class="sl"></span></label>
+            <div class="menu-item">
+                <span>开机自启 <span class="sub" id="autostartSub">仅 Windows</span></span>
+                <label class="switch"><input type="checkbox" id="autostartChk"><span class="track"></span></label>
             </div>
-            <div class="sep"></div>
-            <button class="menu-btn" id="minimizeBtn">🗕 最小化到托盘</button>
-            <button class="menu-btn danger" id="quitBtn">✕ 退出豆包喵喵</button>
+            <div class="msep"></div>
+            <button class="menu-btn" id="minimizeBtn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+                最小化到托盘
+            </button>
+            <button class="menu-btn danger" id="quitBtn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                退出豆包喵喵
+            </button>
         </div>
     </div>
 </header>
 
-<!-- ===== 三栏主区 ===== -->
+<!-- 三栏 -->
 <main class="cols">
-    <!-- 左栏：控制面板 -->
+    <!-- 左：控制 -->
     <section class="col left">
-        <div class="card-title">控制</div>
-        <button class="pill-btn" id="powerBtn">▶ 启动服务</button>
+        <span class="ct">控制</span>
+        <button class="power-btn" id="powerBtn">启动服务</button>
         <div class="row-opt">
             <span>触控板模式</span>
-            <label class="switch"><input type="checkbox" id="tpChk"><span class="sl"></span></label>
+            <label class="switch"><input type="checkbox" id="tpChk"><span class="track"></span></label>
         </div>
-        <p class="hint" id="tpStateHint">开启后，手机可当无线触控板操控电脑</p>
-        <hr class="sep-line">
-        <button class="entry-btn" id="hkEntry">⌨️ 快捷键设置 <span class="spacer" style="text-align:right;color:#BCAAA4;" id="hkCurrent">f9</span></button>
-        <hr class="sep-line">
-        <div>
-            <div class="card-title" style="margin-bottom:8px;">小贴士</div>
-            <p class="hint">1️⃣ 点击「启动服务」，然后让手机扫右侧二维码<br>
-            2️⃣ 手机与电脑须在同一 Wi-Fi<br>
-            3️⃣ 电脑介入（打字/点击）后手机会自动「翻篇」继续输入</p>
-        </div>
+        <p class="desc" id="tpStateHint">开启后手机可作无线触控板操控电脑</p>
+        <hr class="hsep">
+        <button class="entry-btn" id="hkEntry">⌨️ 清屏快捷键<span class="sub" id="hkCurrent" style="margin-left:6px;">F9</span><span class="chev">›</span></button>
+        <hr class="hsep">
+        <span class="ct">使用提示</span>
+        <p class="desc">1 · 点击「启动服务」，用手机扫右侧二维码<br>
+        2 · 手机与电脑需在同一 Wi-Fi<br>
+        3 · 电脑介入输入后，手机会自动翻篇续写</p>
     </section>
 
-    <!-- 中栏：扫码区 -->
+    <!-- 中：扫码 -->
     <section class="col mid">
-        <div class="qr-card">
-            <div class="qr-frame placeholder" id="qrFrame">
+        <div class="qr-wrap">
+            <div class="qr-frame" id="qrFrame">
                 <div class="qr-ph" id="qrPh">
                     <span class="big">📱</span>
-                    启动服务后显示二维码<br><span class="mini-hint">手机扫码即可连接输入</span>
+                    启动服务后显示二维码<br><span class="sub">扫码即可连接输入</span>
                 </div>
                 <img id="qrImg" alt="二维码" style="display:none;">
             </div>
-            <div class="addr-box" id="addrBox" style="display:none;">
-                <div class="addr-line">
-                    <span class="lbl">手机地址</span>
-                    <span id="httpAddr">--</span>
+            <div class="addr-sheet" id="addrSheet" style="display:none;">
+                <div class="addr-main">
+                    <span class="http" id="httpAddr">—</span>
                     <button class="copy-btn" id="copyHttp">复制</button>
                 </div>
-                <div class="addr-sub" id="wsAddr">ws://--/ws</div>
+                <div class="addr-sub" id="wsAddr">ws://—/ws</div>
             </div>
-            <div class="qr-tip" id="qrTip">二维码每 5 秒自动刷新 · 也可用右侧 IP 手动指定</div>
+            <div class="qr-tip">二维码自动刷新 · 右侧可切换 IP 重新生成</div>
         </div>
     </section>
 
-    <!-- 右栏：辅助面板 -->
+    <!-- 右：信息 -->
     <section class="col right">
+        <span class="mode-tag" id="modeTag">桌面模式</span>
         <div>
-            <div class="card-title" style="margin-bottom:8px;">服务发现</div>
-            <div class="svc-name">CatDB · _catdb._tcp.local.</div>
+            <span class="ct">服务发现</span>
+            <div style="margin-top:9px;" class="svc-chip"><span class="pulse"></span>CatDB · _catdb._tcp.local.</div>
         </div>
         <div>
-            <div class="card-title" style="margin-bottom:8px;">本机地址 <span class="mini-hint">点击切换</span></div>
-            <div class="ip-tags" id="ipTags"></div>
+            <span class="ct">本机地址</span>
+            <div class="ip-tags" id="ipTags" style="margin-top:10px;"></div>
         </div>
-        <div>
-            <div class="card-title" style="margin-bottom:8px;">连接说明</div>
-            <p class="fw-note">• 手机浏览器直接访问上方地址即可<br>
-            • 安卓 App 在设置里填入 电脑IP:端口<br>
-            • 若无法连接，请放行 Windows 防火墙中的端口</p>
-        </div>
-        <div class="spacer"></div>
-        <p class="fw-note" style="text-align:right;">❤ 豆包喵喵 已守护</p>
+        <hr class="hsep">
+        <p class="notes">• 手机浏览器直接访问上方地址<br>
+        • 安卓 App：设置 → <b>电脑地址</b> 填入 IP:端口<br>
+        • 无法连接？放行防火墙对 <b>CatDB</b> 的访问</p>
     </section>
 </main>
 
-<!-- ===== 日志面板 ===== -->
+<!-- 日志 -->
 <footer class="logbar">
     <div class="loghead">
         <span class="lt">运行日志</span>
@@ -354,18 +426,14 @@
     <div class="logs" id="logs"></div>
 </footer>
 
-<!-- ===== 快捷键设置弹窗 ===== -->
+<!-- 快捷键弹窗 -->
 <div class="overlay hidden" id="hkModal">
     <div class="modal">
-        <h3>⌨️ 快捷键设置</h3>
+        <h3>清屏快捷键</h3>
+        <p class="msub">在电脑任意窗口按下，触发手机端「清空并切走」</p>
         <div class="m-row">
-            <span style="flex:0 0 auto;">清屏热键</span>
             <select id="hkSelect"></select>
         </div>
-        <p class="hint" style="font-size:12px; color:var(--ink-2); line-height:1.6;">
-            在电脑任意窗口按下该键，会触发手机端「清空并切走」<br>
-            电脑打字/点击时的「翻篇续写」检测不受影响。
-        </p>
         <div class="m-actions">
             <button class="m-btn pri" id="hkSave">保存</button>
             <button class="m-btn sec" id="hkCancel">取消</button>
@@ -378,102 +446,111 @@
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
-const inPy = !!(window.pywebview && window.pywebview.api);
 
-/* ---------- 与后端通信：pywebview API 优先，浏览器回退到 /api/* ---------- */
-async function backend(method, ...args) {
-    if (inPy) {
-        const f = window.pywebview.api[method];
-        if (f) { try { return await f(...args); } catch (e) { return { success:false, error:String(e) }; } }
-        return { success:false, error:'no api' };
-    }
+/* ---------- 通信：pywebview 桥接 / HTTP API 双模式 ----------
+   注意：pywebview 的 window.pywebview 是页面加载后才注入的（pywebviewready），
+   因此绝不能在一开始就固定模式 —— 每次调用都实时探测。 */
+function bridgeReady() { return !!(window.pywebview && window.pywebview.api); }
+function inFile()     { return location.protocol === 'file:'; }
+
+async function httpBackend(method, ...args) {
     const map = {
         get_service_status: () => fetchJson('/api/status'),
         get_recent_logs:   () => fetchJson('/api/logs'),
-        clear_logs:        () => postAction({ action:'clear_logs' }),
-        start_service:     () => postAction({ action:'start' }),
-        stop_service:      () => postAction({ action:'stop' }),
-        toggle_touchpad:   (v) => postAction({ action:'touchpad', enabled: !!v }),
-        toggle_autostart:  (v) => postAction({ action:'autostart', enabled: !!v }),
-        set_hotkey:        (h) => postAction({ action:'hotkey', hotkey: h }),
+        clear_logs:        () => postAction({ action: 'clear_logs' }),
+        start_service:     () => postAction({ action: 'start' }),
+        stop_service:      () => postAction({ action: 'stop' }),
+        toggle_touchpad:   (v) => postAction({ action: 'touchpad', enabled: !!v }),
+        toggle_autostart:  (v) => postAction({ action: 'autostart', enabled: !!v }),
+        set_hotkey:        (h) => postAction({ action: 'hotkey', hotkey: h }),
     };
     const fn = map[method];
-    return fn ? await fn.apply(null, args) : { success:false, error:'unknown method' };
+    return fn ? await fn.apply(null, args) : { success: false, error: 'unknown method' };
 }
+
+async function backend(method, ...args) {
+    if (bridgeReady()) {
+        const f = window.pywebview.api[method];
+        if (f) { try { return await f(...args); } catch (e) { return { success: false, error: String(e && e.message || e) }; } }
+        return { success: false, error: 'no api' };
+    }
+    if (inFile()) {
+        // 桥接尚未注入：稍后 pywebviewready 会触发一次刷新
+        return { success: false, error: 'bridge-pending' };
+    }
+    return httpBackend(method, ...args);
+}
+
 async function fetchJson(url) {
-    try { const r = await fetch(url, { cache:'no-store' }); return await r.json(); }
-    catch (e) { return { success:false, error:String(e) }; }
+    try { const r = await fetch(url, { cache: 'no-store' }); return await r.json(); }
+    catch (e) { return { success: false, error: String(e) }; }
 }
 async function postAction(body) {
     try {
-        const r = await fetch('/api/action', { method:'POST', cache:'no-store',
-            headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+        const r = await fetch('/api/action', { method: 'POST', cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         return await r.json();
-    } catch (e) { return { success:false, error:String(e) }; }
+    } catch (e) { return { success: false, error: String(e) }; }
 }
 
 /* ---------- 状态 ---------- */
-let S = { running:false, port:0, ip:'', ips:[], touchpad_enabled:true, hotkey:'f9', auto_start:false, version:'2.2.0' };
-let curIP = '';          // 当前选中的展示 IP
-let lastLogCount = -1;
+let S = { running: false, port: 0, ip: '', ips: [], touchpad_enabled: true, hotkey: 'f9',
+          auto_start: false, version: '2.2.0' };
+let curIP = '';
 let toastTimer = null;
+let qrTimer = null;
 
 function pickDefaultIP() {
     const list = (S.ips && S.ips.length) ? S.ips : [S.ip || '127.0.0.1'];
     if (list.indexOf(curIP) === -1) curIP = list[0];
 }
-function httpBase() {
-    // pywebview 以 file:// 加载页面，图片/请求需显式指向本机服务
-    return inPy ? `http://127.0.0.1:${S.port}` : '';
+function qrBase() {
+    // file:// + 桥接就绪 → 显式指向本机服务；HTTP 模式相对路径
+    return bridgeReady() ? `http://127.0.0.1:${S.port}` : '';
 }
 
 function renderStatus() {
     const on = S.running;
-    $('dot').className = 'dot ' + (on ? 'on' : 'off');
+    const pill = $('statePill');
+    pill.classList.toggle('on', on);
+    pill.classList.toggle('off', !on);
     $('stateText').textContent = on ? `服务运行中 · ${S.port}` : '服务未启动';
-    $('topIp').textContent = S.ip || '--';
-    $('topPort').textContent = on ? String(S.port) : '--';
-    const btn = $('powerBtn');
-    btn.textContent = on ? '⏹ 停止服务' : '▶ 启动服务';
-    btn.classList.toggle('stop', on);
+    $('topIp').textContent = S.ip || '—';
+    $('topPort').textContent = on ? String(S.port) : '—';
     $('verTag').textContent = 'v' + (S.version || '2.2.0');
+    const btn = $('powerBtn');
+    btn.textContent = on ? '停止服务' : '启动服务';
+    btn.classList.toggle('stop', on);
+    $('modeTag').textContent = bridgeReady() ? '桌面模式' : (inFile() ? '等待桥接…' : '浏览器模式');
     renderAddr(on);
     renderQR(on);
     renderIPTags();
     $('tpChk').checked = !!S.touchpad_enabled;
-    $('hkCurrent').textContent = S.hotkey || 'f9';
-    if ($('hkSelect').value !== (S.hotkey || 'f9')) $('hkSelect').value = S.hotkey || 'f9';
+    $('hkCurrent').textContent = (S.hotkey || 'f9').toUpperCase();
+    try { $('hkSelect').value = S.hotkey || 'f9'; } catch (e) {}
     $('autostartChk').checked = !!S.auto_start;
 }
 
 function renderAddr(on) {
-    const box = $('addrBox');
-    const ph  = $('qrPh');
-    if (!on) { box.style.display = 'none'; return; }
+    $('addrSheet').style.display = on ? 'block' : 'none';
+    if (!on) return;
     pickDefaultIP();
-    const port = S.port;
     const host = curIP || S.ip || '127.0.0.1';
-    const httpA = `http://${host}:${port}`;
-    box.style.display = 'block';
-    $('httpAddr').textContent = httpA;
-    $('wsAddr').textContent = `ws://${host}:${port}/ws`;
-    ph.style.display = 'none';
+    $('httpAddr').textContent = `http://${host}:${S.port}`;
+    $('wsAddr').textContent = `ws://${host}:${S.port}/ws`;
 }
 
-let qrTimer = null;
 function renderQR(on) {
     const frame = $('qrFrame'), img = $('qrImg'), ph = $('qrPh');
     if (!on) {
         if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
         img.style.display = 'none'; ph.style.display = '';
-        frame.classList.add('placeholder');
         return;
     }
     ph.style.display = 'none';
-    frame.classList.remove('placeholder');
     const target = curIP || S.ip || '127.0.0.1';
     img.onload = () => { img.style.display = ''; };
-    const refresh = () => { img.src = `${httpBase()}/qr?ip=${encodeURIComponent(target)}&t=${Date.now()}`; };
+    const refresh = () => { img.src = `${qrBase()}/qr?ip=${encodeURIComponent(target)}&t=${Date.now()}`; };
     refresh();
     if (!qrTimer) qrTimer = setInterval(refresh, 5000);
 }
@@ -487,40 +564,52 @@ function renderIPTags() {
         const b = document.createElement('button');
         b.className = 'ip-tag' + (ip === cur ? ' active' : '');
         b.textContent = ip;
-        b.onclick = () => { curIP = ip; renderStatus(); toast(`已切换地址 ${ip}`); };
+        b.onclick = () => { curIP = ip; renderStatus(); toast('已切换：' + ip); };
         wrap.appendChild(b);
     });
 }
 
 /* ---------- 日志 ---------- */
-function logLine(node) {
-    const el = document.createElement('div');
-    el.className = 'line ' + (node.level || 'info');
-    const lvl = (node.level || 'info').toUpperCase();
-    el.innerHTML = `<span class="t">${esc(node.time || '')}</span><span class="l">${esc(lvl)}</span>${esc(node.msg || '')}`;
-    return el;
-}
 function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 async function pollLogs() {
     const r = await backend('get_recent_logs');
     if (!r || !r.success || !Array.isArray(r.logs)) return;
     const box = $('logs');
-    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
+    const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 60;
+    const frag = document.createDocumentFragment();
+    r.logs.forEach(n => {
+        const el = document.createElement('div');
+        el.className = 'line ' + (n.level || 'info');
+        el.innerHTML = `<span class="t">${esc(n.time || '')}</span><span class="l">${esc((n.level || 'info').toUpperCase())}</span>${esc(n.msg || '')}`;
+        frag.appendChild(el);
+    });
     box.innerHTML = '';
-    r.logs.forEach(n => box.appendChild(logLine(n)));
-    if (atBottom) box.scrollTop = box.scrollHeight;
+    box.appendChild(frag);
+    if (stick) box.scrollTop = box.scrollHeight;
 }
 
 /* ---------- 控制动作 ---------- */
 async function togglePower() {
     const on = S.running;
-    $('powerBtn').disabled = true;
+    const btn = $('powerBtn');
+    btn.disabled = true;
+    btn.textContent = '处理中…';
     const r = on ? await backend('stop_service') : await backend('start_service');
-    $('powerBtn').disabled = false;
-    if (r && r.success !== false) { S = Object.assign(S, r); renderStatus(); pollLogs(); }
-    toast(on ? '服务已停止' : (S.running ? `服务已启动，端口 ${S.port}` : '服务启动失败，查看日志'));
+    btn.disabled = false;
+    btn.textContent = on ? '停止服务' : '启动服务';
+    if (r && r.success !== false) {
+        S = Object.assign(S, r);
+        renderStatus();
+        pollLogs();
+        toast(on ? '服务已停止' : (S.running ? `服务已启动 · ${S.port}` : '启动失败，请查看下方日志'));
+    } else if (r && r.error === 'bridge-pending') {
+        toast('窗口尚未就绪，自动重试中…');
+        setTimeout(togglePower, 1500);
+    } else {
+        toast('操作失败：' + ((r && r.error) || '未知错误'));
+    }
 }
 $('powerBtn').onclick = togglePower;
 
@@ -528,62 +617,82 @@ $('tpChk').addEventListener('change', async (e) => {
     const r = await backend('toggle_touchpad', e.target.checked);
     if (r && r.success !== false) {
         S.touchpad_enabled = r.touchpad_enabled != null ? r.touchpad_enabled : e.target.checked;
-        $('tpStateHint').textContent = S.touchpad_enabled ? '开启后，手机可当无线触控板操控电脑' : '已关闭：手机触控板指令会被忽略';
-        toast(S.touchpad_enabled ? '触控板模式：开' : '触控板模式：关');
+        $('tpStateHint').textContent = S.touchpad_enabled ? '开启后手机可作无线触控板操控电脑' : '已关闭：手机触控指令将被忽略';
+        toast(S.touchpad_enabled ? '触控板模式已开启' : '触控板模式已关闭');
+    } else {
+        e.target.checked = !e.target.checked;
+        toast('操作失败：' + ((r && r.error) || '未知错误'));
     }
 });
 
 $('autostartChk').addEventListener('change', async (e) => {
     const r = await backend('toggle_autostart', e.target.checked);
-    if (r && r.success !== false) { S.auto_start = !!r.enabled; toast(S.auto_start ? '已开启开机自启' : '已关闭开机自启'); }
-    else { e.target.checked = !e.target.checked; toast('设置开机自启失败（仅 Windows 支持）'); }
+    if (r && r.success !== false) {
+        S.auto_start = !!r.enabled;
+        toast(S.auto_start ? '已开启开机自启' : '已关闭开机自启');
+    } else {
+        e.target.checked = !e.target.checked;
+        toast('设置失败（仅 Windows 支持）');
+    }
 });
 
 $('clearLogsBtn').onclick = () => { backend('clear_logs'); $('logs').innerHTML = ''; };
+
 $('copyHttp').onclick = async () => {
     const text = $('httpAddr').textContent;
     let ok = false;
-    if (inPy && window.pywebview.api.copy_to_clipboard) {
+    if (bridgeReady() && window.pywebview.api.copy_to_clipboard) {
         const r = await window.pywebview.api.copy_to_clipboard(text);
         ok = r && r.success;
     }
     if (!ok) {
         try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { ok = false; }
     }
-    if (!ok) { // 兜底
+    if (!ok) {
         const ta = document.createElement('textarea');
         ta.value = text; document.body.appendChild(ta); ta.select();
-        try { document.execCommand('copy'); ok = true; } catch (e) {}
+        try { ok = document.execCommand('copy'); } catch (e) {}
         ta.remove();
     }
-    toast(ok ? '已复制地址' : '复制失败');
+    const btn = $('copyHttp');
+    btn.textContent = ok ? '已复制 ✓' : '复制失败';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1400);
 };
 
-/* ---------- 齿轮菜单 / 弹窗 ---------- */
+/* ---------- 齿轮 / 弹窗 ---------- */
 $('gearBtn').onclick = (e) => { e.stopPropagation(); $('gearMenu').classList.toggle('hidden'); };
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.gear-wrap')) $('gearMenu').classList.add('hidden');
 });
-$('minimizeBtn').onclick = () => { if (inPy) window.pywebview.api.minimize_window(); };
+$('minimizeBtn').onclick = () => {
+    if (bridgeReady() && window.pywebview.api.minimize_window) window.pywebview.api.minimize_window();
+    else toast('仅桌面窗口模式支持');
+};
 $('quitBtn').onclick = async () => {
-    if (inPy) { await window.pywebview.api.exit_app(); }
+    if (bridgeReady() && window.pywebview.api.exit_app) { await window.pywebview.api.exit_app(); }
     else { await backend('stop_service'); toast('服务已停止，可关闭本页'); }
 };
 
-// 快捷键
 (function initHk() {
     const sel = $('hkSelect');
     ['f1','f2','f3','f4','f5','f6','f7','f8','f9','f10','f11','f12','insert','home','end','delete','backspace','enter'].forEach(k => {
-        const o = document.createElement('option'); o.value = k; o.textContent = k.toUpperCase();
+        const o = document.createElement('option');
+        o.value = k; o.textContent = k.toUpperCase();
         sel.appendChild(o);
     });
-    $('hkEntry').onclick = () => { $('hkModal').classList.remove('hidden'); };
+    $('hkEntry').onclick = () => $('hkModal').classList.remove('hidden');
     $('hkCancel').onclick = () => $('hkModal').classList.add('hidden');
     $('hkSave').onclick = async () => {
         const hk = $('hkSelect').value;
         const r = await backend('set_hotkey', hk);
-        if (r && r.success !== false) { S.hotkey = r.hotkey || hk; renderStatus(); toast(`清屏热键已设为 ${(r.hotkey || hk).toUpperCase()}`); }
-        else toast('设置失败：' + ((r && r.error) || '未知错误'));
+        if (r && r.success !== false) {
+            S.hotkey = r.hotkey || hk;
+            renderStatus();
+            toast('清屏热键已设为 ' + (r.hotkey || hk).toUpperCase());
+        } else {
+            toast('设置失败：' + ((r && r.error) || '未知错误'));
+        }
         $('hkModal').classList.add('hidden');
     };
     $('hkModal').addEventListener('click', (e) => { if (e.target === $('hkModal')) $('hkModal').classList.add('hidden'); });
@@ -591,8 +700,11 @@ $('quitBtn').onclick = async () => {
 
 /* ---------- 轮询 ---------- */
 function toast(msg) {
-    const t = $('toast'); t.textContent = msg; t.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
 async function pollStatus() {
@@ -606,12 +718,15 @@ async function pollStatus() {
         renderStatus();
     }
 }
+function refreshNow() { pollStatus(); pollLogs(); }
 
-// 日志面板默认展示启动过程日志
-pollLogs();
-pollStatus();
+// pywebview 桥接注入完成后立刻刷新（此前轮询在 file:// 下为空转）
+window.addEventListener('pywebviewready', refreshNow);
+document.addEventListener('DOMContentLoaded', refreshNow);
+
+refreshNow();
 setInterval(pollStatus, 1000);
-setInterval(pollLogs, 1000);
+setInterval(pollLogs, 1200);
 </script>
 </body>
 </html>
