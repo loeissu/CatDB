@@ -18,6 +18,8 @@ android {
     }
     buildTypes {
         release {
+            // CI installable: sign release with debug key, otherwise assembleRelease is unsigned
+            signingConfig signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

@@ -56,6 +56,16 @@ jobs:
         run: |
           ls -R android/app/build/outputs/apk/release/
           cp $(ls android/app/build/outputs/apk/release/*.apk | head -n 1) CatDB_Android.apk
+          ls -lh CatDB_Android.apk
+      - name: Verify APK signed (must pass else uninstallable)
+        run: |
+          APK=CatDB_Android.apk
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/build-tools/" || true
+          APKSIGNER=$(ls "$ANDROID_SDK_ROOT"/build-tools/*/apksigner | head -n 1)
+          echo "apksigner=$APKSIGNER"
+          "$APKSIGNER" verify --print-certs "$APK"
       - name: Upload APK to Release
         uses: svenstaro/upload-release-action@v2
         with:
