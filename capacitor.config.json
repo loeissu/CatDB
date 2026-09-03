@@ -1,0 +1,16 @@
+{
+  "appId": "com.loeissu.catdb",
+  "appName": "豆包喵喵",
+  "version": "2.2.0",
+  "appVersion": "2.2.0",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http"
+  },
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": false,
+      "backgroundColor": "#F9F5F0"
+    }
+  }
+}

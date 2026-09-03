@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="catGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#5D4037;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3E2723;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="earGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#3E2723;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FFAB91;stop-opacity:1" />
+    </linearGradient>
+    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#3E2723" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  
+  <!-- 背景圆 -->
+  <circle cx="256" cy="256" r="240" fill="#FFF9F0"/>
+  
+  <!-- 猫头主体 -->
+  <ellipse cx="256" cy="290" rx="160" ry="130" fill="url(#catGrad)" filter="url(#dropShadow)"/>
+  
+  <!-- 左耳 -->
+  <path d="M120,180 Q100,80 160,130 Q200,160 190,240 Z" fill="url(#catGrad)" filter="url(#dropShadow)"/>
+  <path d="M130,200 Q140,120 180,150 Q200,180 180,220 Z" fill="url(#earGrad)"/>
+  
+  <!-- 右耳 -->
+  <path d="M392,180 Q412,80 352,130 Q312,160 322,240 Z" fill="url(#catGrad)" filter="url(#dropShadow)"/>
+  <path d="M382,200 Q372,120 332,150 Q312,180 332,220 Z" fill="url(#earGrad)"/>
+  
+  <!-- 脸部轮廓光晕 -->
+  <ellipse cx="256" cy="280" rx="145" ry="110" fill="none" stroke="#8D6E63" stroke-width="2" opacity="0.2"/>
+  
+  <!-- 左眼 -->
+  <ellipse cx="186" cy="260" rx="32" ry="38" fill="#FFF"/>
+  <ellipse cx="186" cy="260" rx="16" ry="19" fill="#3E2723"/>
+  <ellipse cx="194" cy="250" rx="6" ry="6" fill="#FFF"/>
+  
+  <!-- 右眼 -->
+  <ellipse cx="326" cy="260" rx="32" ry="38" fill="#FFF"/>
+  <ellipse cx="326" cy="260" rx="16" ry="19" fill="#3E2723"/>
+  <ellipse cx="334" cy="250" rx="6" ry="6" fill="#FFF"/>
+  
+  <!-- 鼻子 -->
+  <path d="M256,320 Q240,350 256,360 Q272,350 256,320 Z" fill="#FF8A65"/>
+  <ellipse cx="248" cy="340" rx="6" ry="4" fill="#FFB74D" opacity="0.5"/>
+  <ellipse cx="264" cy="340" rx="6" ry="4" fill="#FFB74D" opacity="0.5"/>
+  
+  <!-- 嘴巴 -->
+  <path d="M256,370 Q230,390 256,400" stroke="#5D4037" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M256,370 Q282,390 256,400" stroke="#5D4037" stroke-width="4" fill="none" stroke-linecap="round"/>
+  
+  <!-- 胡须左 -->
+  <path d="M170,320 Q110,310 70,315" stroke="#5D4037" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <path d="M170,340 Q110,340 70,345" stroke="#5D4037" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <path d="M170,360 Q110,370 70,380" stroke="#5D4037" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+  
+  <!-- 胡须右 -->
+  <path d="M342,320 Q402,310 442,315" stroke="#5D4037" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <path d="M342,340 Q402,340 442,345" stroke="#5D4037" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <path d="M342,360 Q402,370 442,380" stroke="#5D4037" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+  
+  <!-- 腮红 -->
+  <ellipse cx="156" cy="310" rx="35" ry="20" fill="#FF8A65" opacity="0.15"/>
+  <ellipse cx="356" cy="310" rx="35" ry="20" fill="#FF8A65" opacity="0.15"/>
+  
+  <!-- 脚爪装饰 -->
+  <ellipse cx="190" cy="430" rx="30" ry="20" fill="#FFF8E1" stroke="#5D4037" stroke-width="3"/>
+  <ellipse cx="190" cy="430" rx="10" ry="6" fill="#FFCCBC"/>
+  <ellipse cx="322" cy="430" rx="30" ry="20" fill="#FFF8E1" stroke="#5D4037" stroke-width="3"/>
+  <ellipse cx="322" cy="430" rx="10" ry="6" fill="#FFCCBC"/>
+</svg>

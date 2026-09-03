@@ -1,0 +1,21 @@
+{
+  "name": "豆包喵喵",
+  "short_name": "豆包喵喵",
+  "description": "手机语音输入 → 电脑实时上屏",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFF9F0",
+  "theme_color": "#5D4037",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "cat_icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "lang": "zh-CN",
+  "dir": "ltr"
+}

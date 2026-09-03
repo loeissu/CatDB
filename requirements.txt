@@ -2,3 +2,7 @@ aiohttp>=3.8.0
 pyautogui>=0.9.53
 pyperclip>=1.8.2
 pynput>=1.7.6
+pystray>=0.19.0
+netifaces>=0.11.0
+qrcode>=7.4
+Pillow>=9.0.0

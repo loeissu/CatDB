@@ -31,6 +31,8 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# CI 需要 CatDB.spec 参与云端构建
+!CatDB.spec
 
 # Installer logs
 pip-log.txt
@@ -208,3 +210,21 @@ __marimo__/
 
 .idea
 .trae
+
+# Capacitor / Node
+node_modules/
+package-lock.json
+
+# Build outputs
+releases/
+dist/
+build/
+
+# Android build
+android/.gradle/
+android/app/build/
+android/build/
+
+# www 前端源码需要提交（供 PyInstaller datas + Capacitor 同步）
+# 仅忽略系统生成文件，保留桌面/移动端页面
+# www/

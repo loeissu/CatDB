@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.CatDB" parent="Theme.AppCompat.Light.NoActionBar">
+        <!-- 状态栏颜色，与页面背景一致 -->
+        <item name="android:statusBarColor">#F9F5F0</item>
+        <!-- 去除窗口背景透明度 -->
+        <item name="android:windowBackground">@android:color/white</item>
+        <!-- 去除导航栏背景透明度 -->
+        <item name="android:navigationBarColor">#F9F5F0</item>
+    </style>
+</resources>

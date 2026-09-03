@@ -11,11 +11,19 @@ import platform
 import sys
 import threading
 import time
+import logging
+import argparse
+import queue
+import os
+import signal
 from aiohttp import web
 import aiohttp
 import pyautogui
 import pyperclip
 import subprocess
+import webview
+
+__version__ = "2.2.0"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -24,8 +32,71 @@ try:
 except Exception:
     pass
 
+# 日志配置
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger('catdb')
+
 # 剪贴板操作锁
 clipboard_lock = threading.Lock()
+
+# ============== 全局状态 & 同步原语 ==============
+connected_clients = set()
+client_configs = {}
+_clients_lock = threading.Lock()  # 保护 connected_clients / client_configs
+
+def get_clients_snapshot():
+    """线程安全地获取客户端快照"""
+    with _clients_lock:
+        return list(connected_clients), dict(client_configs)
+
+def add_client(ws):
+    with _clients_lock:
+        connected_clients.add(ws)
+
+def remove_client(ws):
+    with _clients_lock:
+        connected_clients.discard(ws)
+        client_configs.pop(ws, None)
+
+def set_client_config(ws, config):
+    with _clients_lock:
+        client_configs[ws] = config
+
+def get_detect_keyboard_enabled():
+    with _clients_lock:
+        return any(c.get('detect_keyboard') for c in client_configs.values())
+
+synced_text = ""
+main_loop = None
+typing_in_progress = False
+rebase_triggered = False  # 标记是否已触发增量模式，避免重复触发
+pending_strip_punctuation = False  # 标记下次输入是否需要去除开头标点
+
+# 系统托盘相关
+tray_icon = None
+qr_window = None
+search_status = "searching"  # searching / connected / qr_showed
+search_start_time = None
+QR_TIMEOUT = 10  # 10秒后显示二维码
+
+# 优雅退出控制
+shutdown_event = threading.Event()
+zeroconf_instance = None  # 保持 Zeroconf 引用，防止 GC 导致服务注销
+
+# QR 窗口队列（主线程处理）
+qr_window_queue = queue.Queue()
+
+# 切换窗口（Alt+Tab 连续切换）状态：按住 Alt 保持 1 秒，期间再次触发只按 Tab
+hotkey_alt_held = False
+hotkey_alt_timer = None
+hotkey_alt_lock = threading.Lock()
+
+# 触控板模式开关
+touchpad_enabled = True
 
 # ============== 配置项 ==============
 CONFIG = {
@@ -34,29 +105,53 @@ CONFIG = {
 }
 # ===================================
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='豆包喵喵 - 手机语音输入 → 电脑实时上屏')
+    parser.add_argument('--port', type=int, default=5000, help='初始端口 (默认: 5000)')
+    parser.add_argument('--hotkey', type=str, default='f9', help='清空快捷键 (默认: f9)')
+    parser.add_argument('--max-port-attempts', type=int, default=20, help='最大端口尝试次数 (默认: 20)')
+    parser.add_argument('--minimized', action='store_true', help='最小化启动（开机自启模式，不显示窗口）')
+    args = parser.parse_args()
+    CONFIG['port'] = args.port
+    CONFIG['hotkey'] = args.hotkey
+    CONFIG['max_port_attempts'] = args.max_port_attempts
+    CONFIG['minimized'] = args.minimized
+
+# ============== 端口自动探测 ==============
+def check_port_available(host, port):
+    """
+    使用原生 socket 检测端口是否可用。
+    返回 True 表示端口空闲，False 表示已被占用。
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.settimeout(0.1)  # 100ms 超时，快速检测
+            s.bind((host, port))
+            return True
+    except OSError:
+        return False
+
+def find_available_port(start_port, host='0.0.0.0', max_attempts=20):
+    """
+    从 start_port 开始，依次向下探测可用端口。
+    返回第一个可用端口号；若全部占满则返回 None。
+    """
+    for offset in range(max_attempts):
+        candidate = start_port + offset
+        if check_port_available(host, candidate):
+            return candidate
+    return None
+
 pyautogui.PAUSE = 0
 pyautogui.FAILSAFE = False  # 远程触控板控制场景，禁用左上角安全保护（否则移动到角落会抛异常）
-connected_clients = set()
-client_configs = {}
-synced_text = ""
-main_loop = None
-typing_in_progress = False
-rebase_triggered = False  # 标记是否已触发增量模式，避免重复触发
-pending_strip_punctuation = False  # 标记下次输入是否需要去除开头标点
-
-# 切换窗口（Alt+Tab 连续切换）状态：按住 Alt 保持 1 秒，期间再次触发只按 Tab
-hotkey_alt_held = False
-hotkey_alt_timer = None
-hotkey_alt_lock = threading.Lock()
-
-# 核心 HTML/CSS 代码
 HTML_PAGE = '''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>豆包喵喵</title>
-    <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+    <!-- 移除 Google Fonts 硬依赖，改用系统字体栈 -->
     <style>
         :root {
             --bg-color: #FFF9F0;
@@ -75,7 +170,7 @@ HTML_PAGE = '''<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
         
         body {
-            font-family: 'ZCOOL KuaiLe', cursive, sans-serif;
+            font-family: 'ZCOOL KuaiLe', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'WenQuanYi Micro Hei', sans-serif;
             background-color: var(--bg-color);
             color: var(--text-main);
             height: 100vh;
@@ -280,7 +375,7 @@ HTML_PAGE = '''<!DOCTYPE html>
         textarea {
             flex: 1; width: 100%; border: none; outline: none; resize: none;
             background: transparent;
-            font-family: 'ZCOOL KuaiLe', cursive;
+            font-family: 'ZCOOL KuaiLe', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'WenQuanYi Micro Hei', sans-serif;
             font-size: 22px; /* 字体稍微减小以匹配密行距 */
             color: var(--text-main);
             line-height: var(--line-height);
@@ -1064,25 +1159,75 @@ HTML_PAGE = '''<!DOCTYPE html>
 '''
 
 def get_local_ip():
+    """
+    获取本机局域网 IP。
+    优先使用 netifaces 遍历网卡，失败则回退到 socket 连接外网法，最终兜底 127.0.0.1。
+    """
+    # 1. 优先使用 netifaces 遍历网卡（最可靠，无需外网）
+    try:
+        import netifaces
+        for iface in netifaces.interfaces():
+            addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
+            for addr in addrs:
+                ip = addr.get('addr', '')
+                if ip and not ip.startswith('127.'):
+                    return ip
+    except Exception:
+        pass
+    # 2. 回退：socket.gethostbyname_ex
     try:
         hostname = socket.gethostname()
         ips = socket.gethostbyname_ex(hostname)[2]
         for ip in ips:
-            if ip.startswith('192.168.') or ip.startswith('10.'): return ip
+            if ip.startswith('192.168.') or ip.startswith('10.'):
+                return ip
         for ip in ips:
-            if ip.startswith('172.') and 16 <= int(ip.split('.')[1]) <= 31: return ip
+            if ip.startswith('172.') and 16 <= int(ip.split('.')[1]) <= 31:
+                return ip
+    except Exception:
+        pass
+    # 3. 最后兜底：尝试连接外网（需要联网），失败则返回 127.0.0.1
+    try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
         s.connect(('8.8.8.8', 80))
-        ip = s.getsockname()[0]; s.close()
+        ip = s.getsockname()[0]
+        s.close()
         return ip
-    except: return '127.0.0.1'
+    except Exception:
+        return '127.0.0.1'
 
 def compute_diff(old, new):
-    common = 0
+    """
+    计算两个字符串的差异：返回 (需要删除的字符数, 需要添加的文本)。
+    支持中间编辑场景：通过前后缀匹配定位变更区域。
+    """
+    if old == new:
+        return 0, ''
+    # 找到共同前缀长度
+    prefix = 0
     for i in range(min(len(old), len(new))):
-        if old[i] == new[i]: common += 1
-        else: break
-    return len(old) - common, new[common:]
+        if old[i] == new[i]:
+            prefix += 1
+        else:
+            break
+    # 找到共同后缀长度（从前缀结束后开始）
+    suffix = 0
+    old_tail = old[prefix:]
+    new_tail = new[prefix:]
+    max_suffix = min(len(old_tail), len(new_tail))
+    for i in range(max_suffix):
+        if old_tail[-(i+1)] == new_tail[-(i+1)]:
+            suffix += 1
+        else:
+            break
+    # 边界保护：防止 prefix + suffix 超过字符串长度
+    suffix = min(suffix, len(old) - prefix, len(new) - prefix)
+    # 需要删除的字符数 = 旧文本中除去前后缀的部分
+    del_count = len(old) - prefix - suffix
+    # 需要添加的文本 = 新文本中除去前后缀的部分
+    add_text = new[prefix:len(new)-suffix] if suffix > 0 else new[prefix:]
+    return del_count, add_text
 
 def type_text(text):
     """
@@ -1152,6 +1297,15 @@ def release_alt():
             hotkey_alt_held = False
         hotkey_alt_timer = None
 
+# 安全：仅允许白名单内的命令（防止任意代码执行）
+ALLOWED_COMMANDS = {
+    'notepad': ['notepad.exe'],
+    'calc': ['calc.exe'],
+    'explorer': ['explorer.exe'],
+    'cmd': ['cmd.exe'],
+    'powershell': ['powershell.exe'],
+}
+
 def execute_shortcut(sc):
     """
     执行手机端发送的自定义快捷键动作。
@@ -1190,19 +1344,26 @@ def execute_shortcut(sc):
                 return False
         elif stype == 'script':
             release_alt()  # 启动脚本前先释放保持中的 Alt
-            # 启动电脑本机命令/脚本（局域网个人工具，与现有热键同信任模型）
-            cmd = sc.get('cmd', '').strip()
-            if not cmd:
+            # 安全：仅允许白名单命令，禁止 shell=True
+            cmd_name = sc.get('cmd', '').strip().lower()
+            if not cmd_name:
                 return False
-            subprocess.Popen(cmd, shell=True)
+            if cmd_name not in ALLOWED_COMMANDS:
+                logger.warning(f'拒绝执行非白名单命令: {cmd_name}')
+                return False
+            try:
+                subprocess.Popen(ALLOWED_COMMANDS[cmd_name], shell=False)
+            except Exception as e:
+                logger.error(f'启动命令失败: {e}')
+                return False
         else:
             return False
         # 按键类操作属于“电脑介入”，触发增量模式，避免与手机端输入冲突
-        if any(c.get('detect_keyboard') for c in client_configs.values()):
+        if get_detect_keyboard_enabled():
             reset_synced_text()
         return True
     except Exception as e:
-        print(f'⚠️ 快捷键执行失败: {e}')
+        logger.warning(f'⚠️ 快捷键执行失败: {e}')
         return False
 
 # 触控板虚拟鼠标位置：累积增量做绝对定位，规避 Windows 高频 SetCursorPos 后读取位置滞后导致的“抖动不移动”
@@ -1258,7 +1419,7 @@ def handle_touch(msg):
             return False
         return True
     except Exception as e:
-        print(f'⚠️ 触控执行失败: {e}')
+        logger.warning(f'⚠️ 触控执行失败: {e}')
         return False
 
 def send_backspaces(count):
@@ -1279,14 +1440,14 @@ async def handle_websocket(req):
     global synced_text
     ws = web.WebSocketResponse()
     await ws.prepare(req)
-    connected_clients.add(ws)
-    print('📱 手机已连接')
+    add_client(ws)
+    logger.info('📱 手机已连接')
     try:
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 data = json.loads(msg.data)
                 if data.get('type') == 'config':
-                    client_configs[ws] = {'detect_keyboard': data.get('detectKeyboard')}
+                    set_client_config(ws, {'detect_keyboard': data.get('detectKeyboard')})
                 elif data.get('type') == 'diff':
                     global rebase_triggered, pending_strip_punctuation
                     new_txt = data.get('newText', '')
@@ -1294,19 +1455,23 @@ async def handle_websocket(req):
                     # 触发增量/清空后，下一次无回退的输入才剪除句首标点
                     if pending_strip_punctuation and d_cnt == 0 and add_txt:
                         # 中英文常见标点符号（不含书名号、方括号等成对符号，但保留引号）
-                        punctuations = "，。、；：？！""''·…—～,.;:?!'\""
+                        punctuations = "，。、；：？！\"\"''·…—～,.;:?!'\""
                         if add_txt[0] in punctuations:
                             add_txt = add_txt[1:]  # 只剪除发送内容的标点
-                            print(f'✂️ 去除开头标点')
+                            logger.debug('✂️ 去除开头标点')
                         pending_strip_punctuation = False  # 只处理一次
                     rebase_triggered = False  # 手机端有新输入，重置增量触发标志
-                    if d_cnt: send_backspaces(d_cnt); print(f'⌫ {d_cnt}')
-                    if add_txt: type_text(add_txt); print(f'⌨️ {add_txt!r}')
+                    if d_cnt: 
+                        send_backspaces(d_cnt)
+                        logger.debug(f'⌫ {d_cnt}')
+                    if add_txt: 
+                        type_text(add_txt)
+                        logger.debug(f'⌨️ {add_txt!r}')
                     synced_text = new_txt
                 elif data.get('type') == 'reset':
                     synced_text = ""
                     pending_strip_punctuation = True  # 清空后下次输入需要检查标点
-                    print('🔄 重置')
+                    logger.info('🔄 重置')
                 elif data.get('type') == 'shortcut':
                     # 手机端自定义快捷键：按键组合 / 内置动作 / 启动脚本
                     ok = execute_shortcut(data.get('sc') or {})
@@ -1314,7 +1479,16 @@ async def handle_websocket(req):
                 elif data.get('type') == 'touch':
                     # 手机端触控板：移动 / 点击 / 双击 / 右键 / 滚动
                     handle_touch(data)
-    finally: connected_clients.discard(ws); client_configs.pop(ws, None); print('📱 断开')
+                elif data.get('type') == 'touchpad_toggle':
+                    # 触控板模式开关
+                    new_state = data.get('enabled', True)
+                    global touchpad_enabled
+                    touchpad_enabled = new_state
+                    status = '开启' if new_state else '关闭'
+                    logger.info(f'触控板模式: {status}')
+    finally:
+        remove_client(ws)
+        logger.info('📱 断开')
     return ws
 
 async def broadcast_clear_with_blur():
@@ -1323,7 +1497,7 @@ async def broadcast_clear_with_blur():
         except: pass
 
 async def broadcast_rebase():
-    for ws in list(connected_clients):
+    for ws in get_clients_snapshot()[0]:
         try: await ws.send_json({'type': 'rebase'})
         except: pass
 
@@ -1335,7 +1509,7 @@ def reset_synced_text():
         synced_text = ""
         rebase_triggered = True  # 标记已触发
         pending_strip_punctuation = True  # 下次输入需要检查标点
-        print('🔄 电脑端输入，触发增量同步')
+        logger.info('🔄 电脑端输入，触发增量同步')
         if main_loop: asyncio.run_coroutine_threadsafe(broadcast_rebase(), main_loop)
 
 def setup_hotkey():
@@ -1353,7 +1527,7 @@ def setup_hotkey():
                 if hotkey and k.lower() == hotkey.lower():
                     if main_loop: asyncio.run_coroutine_threadsafe(broadcast_clear_with_blur(), main_loop)
                     return
-                if k.lower() not in IGNORED and any(c.get('detect_keyboard') for c in client_configs.values()):
+                if k.lower() not in IGNORED and get_detect_keyboard_enabled():
                     reset_synced_text()
             except: pass
 
@@ -1362,31 +1536,506 @@ def setup_hotkey():
             try:
                 # 只在左键按下时触发，释放时不触发
                 if button == mouse.Button.left and pressed:
-                    if any(c.get('detect_keyboard') for c in client_configs.values()):
+                    if get_detect_keyboard_enabled():
                         reset_synced_text()
             except: pass
 
         keyboard.Listener(on_press=on_press).start()
         mouse.Listener(on_click=on_click).start()
-        if hotkey: print(f'🎹 热键: [{hotkey}]')
-        print('🖱️ 鼠标左键监测已启用')
-    except: print('⚠️  热键需安装 pynput')
+        if hotkey: logger.info(f'🎹 热键: [{hotkey}]')
+        logger.info('🖱️ 鼠标左键监测已启用')
+    except Exception as e:
+        logger.warning(f'⚠️  热键需安装 pynput: {e}')
 
+async def handle_qr(req):
+    try:
+        import qrcode
+        from io import BytesIO
+        ip = get_local_ip()
+        port = CONFIG.get('port', 5000)
+        url = f'http://{ip}:{port}'
+        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color='black', back_color='white')
+        buf = BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        return web.Response(body=buf.read(), content_type='image/png')
+    except Exception as e:
+        return web.Response(text=f'QR generation failed: {e}', status=500)
+
+async def handle_desktop(req):
+    """桌面 GUI 页面： serving www/desktop.html，供 pywebview 主窗口加载"""
+    try:
+        base = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(base, 'www', 'desktop.html')
+        # PyInstaller 单文件打包后资源在 sys._MEIPASS
+        if not os.path.exists(path) and hasattr(sys, '_MEIPASS'):
+            path = os.path.join(sys._MEIPASS, 'www', 'desktop.html')
+        with open(path, 'r', encoding='utf-8') as f:
+            html = f.read()
+        return web.Response(text=html, content_type='text/html', headers={'Cache-Control': 'no-store'})
+    except Exception as e:
+        return web.Response(text=f'desktop.html load failed: {e}', status=500)
+
+# ============== 系统托盘 + QR 窗口逻辑 ==============
+def create_qr_image():
+    """生成 QR 码的 PIL Image 对象"""
+    try:
+        import qrcode
+        ip = get_local_ip()
+        port = CONFIG.get('port', 5000)
+        url = f'http://{ip}:{port}'
+        qr = qrcode.QRCode(version=1, box_size=8, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color='black', back_color='white')
+        return img
+    except Exception as e:
+        logger.error(f'生成二维码失败: {e}')
+        return None
+
+def show_qr_window():
+    """在主线程中显示二维码弹窗"""
+    global qr_window, search_status
+    if qr_window is not None:
+        return
+    search_status = "qr_showed"
+    
+    try:
+        import tkinter as tk
+        from PIL import ImageTk
+        
+        qr_window = tk.Tk()
+        qr_window.title('豆包喵喵 - 扫码连接')
+        qr_window.resizable(False, False)
+        qr_window.attributes('-topmost', True)
+        
+        # 窗口居中
+        w, h = 320, 400
+        sw = qr_window.winfo_screenwidth()
+        sh = qr_window.winfo_screenheight()
+        qr_window.geometry(f'{w}x{h}+{(sw-w)//2}+{(sh-h)//2}')
+        
+        # 标题
+        title = tk.Label(qr_window, text='📱 使用手机扫描二维码连接', font=('微软雅黑', 12, 'bold'))
+        title.pack(pady=(20, 10))
+        
+        # QR 码
+        qr_img = create_qr_image()
+        if qr_img:
+            tk_img = ImageTk.PhotoImage(qr_img)
+            qr_label = tk.Label(qr_window, image=tk_img)
+            qr_label.image = tk_img  # 保持引用
+            qr_label.pack(pady=10)
+        
+        # URL 显示
+        ip = get_local_ip()
+        port = CONFIG.get('port', 5000)
+        url_label = tk.Label(qr_window, text=f'http://{ip}:{port}', font=('Consolas', 11), fg='#5D4037')
+        url_label.pack(pady=5)
+        
+        # 提示
+        hint = tk.Label(qr_window, text='或在手机浏览器中输入上方地址', font=('微软雅黑', 10), fg='#8D6E63')
+        hint.pack(pady=(5, 15))
+        
+        # 关闭按钮
+        close_btn = tk.Button(qr_window, text='关闭', font=('微软雅黑', 11), width=12,
+                             command=close_qr_window, bg='#FFB74D', fg='white')
+        close_btn.pack(pady=10)
+        
+        qr_window.protocol('WM_DELETE_WINDOW', close_qr_window)
+        qr_window.mainloop()
+    except ImportError:
+        logger.error('显示二维码窗口需要 tkinter 和 Pillow')
+        search_status = "searching"
+    except Exception as e:
+        logger.error(f'显示二维码窗口失败: {e}')
+        search_status = "searching"
+
+def process_qr_queue():
+    """主线程定期检查队列并显示 QR 窗口"""
+    try:
+        while not qr_window_queue.empty():
+            qr_window_queue.get_nowait()
+            show_qr_window()
+    except queue.Empty:
+        pass
+    # 100ms 后再次检查
+    if not shutdown_event.is_set() and main_loop and not main_loop.is_closed():
+        main_loop.call_later(0.1, process_qr_queue)
+
+def close_qr_window():
+    """关闭 QR 窗口"""
+    global qr_window
+    if qr_window:
+        qr_window.destroy()
+        qr_window = None
+
+def update_tray_status(status_text, icon_path=None):
+    """更新托盘图标和提示"""
+    global tray_icon
+    if tray_icon is None:
+        return
+    try:
+        if icon_path:
+            from PIL import Image
+            tray_icon.icon = Image.open(icon_path)
+        tray_icon.title = f'豆包喵喵 - {status_text}'
+    except:
+        pass
+
+def on_tray_show_qr(icon, item):
+    """托盘菜单：显示二维码"""
+    # 通过队列请求主线程显示（Tkinter 必须在主线程）
+    qr_window_queue.put('show')
+
+def on_tray_show_ip(icon, item):
+    """托盘菜单：显示 IP 地址"""
+    ip = get_local_ip()
+    port = CONFIG.get('port', 5000)
+    logger.info(f'📱 手机访问: http://{ip}:{port}')
+
+def on_tray_exit(icon, item):
+    """托盘菜单：退出"""
+    logger.info('用户请求退出，正在关闭...')
+    shutdown_event.set()
+    if tray_icon:
+        tray_icon.stop()
+    # 通知主循环退出
+    if main_loop and not main_loop.is_closed():
+        main_loop.call_soon_threadsafe(main_loop.stop)
+
+def create_tray_icon():
+    """创建系统托盘图标"""
+    global tray_icon
+    try:
+        import pystray
+        from PIL import Image, ImageDraw, ImageFont
+        
+        # 创建默认图标（橙色猫咪爪印）
+        img = Image.new('RGBA', (64, 64), (255, 183, 77, 255))
+        draw = ImageDraw.Draw(img)
+        # 画一个简单的猫爪
+        draw.ellipse([16, 24, 48, 56], fill='#5D4037')  # 主掌
+        draw.ellipse([12, 12, 24, 24], fill='#5D4037')  # 左上趾
+        draw.ellipse([24, 8, 36, 20], fill='#5D4037')   # 中上趾
+        draw.ellipse([36, 12, 48, 24], fill='#5D4037')  # 右上趾
+        draw.ellipse([20, 30, 44, 52], fill='#FFE0B2')  # 掌心
+        
+        menu = pystray.Menu(
+            pystray.MenuItem('显示二维码', on_tray_show_qr, default=True),
+            pystray.MenuItem('显示 IP 地址', on_tray_show_ip),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('退出', on_tray_exit)
+        )
+        
+        tray_icon = pystray.Icon('catdb', img, '豆包喵喵 - 搜索中...', menu)
+        threading.Thread(target=tray_icon.run, daemon=True).start()
+        logger.info('🐾 系统托盘已启动')
+        return True
+    except Exception as e:
+        logger.warning(f'创建系统托盘失败: {e}')
+        return False
+
+# 搜索超时检查线程
+def search_timeout_check():
+    """启动后 10 秒内如果没有手机连接，则请求主线程显示二维码窗口"""
+    global search_status, search_start_time
+    search_start_time = time.time()
+    
+    while not shutdown_event.is_set():
+        time.sleep(1)
+        elapsed = time.time() - search_start_time
+        
+        # 有手机连接了，不需要弹窗
+        clients, _ = get_clients_snapshot()
+        if len(clients) > 0:
+            if search_status != "connected":
+                search_status = "connected"
+                update_tray_status('已连接')
+                close_qr_window()  # 如果 QR 窗口开着，关闭它
+            continue
+        
+        # 超过 10 秒没有连接，请求主线程弹出二维码
+        if elapsed >= QR_TIMEOUT and search_status == "searching":
+            search_status = "qr_showed"
+            update_tray_status('等待扫码')
+            # 通过队列请求主线程创建 QR 窗口（Tkinter 必须在主线程）
+            qr_window_queue.put('show')
+
+import os
+
+# ============== 主入口 ==============
 async def main():
-    global main_loop
+    global main_loop, search_start_time, zeroconf_instance
     main_loop = asyncio.get_event_loop()
+    search_start_time = time.time()
+    
+    # 端口自动探测
+    desired_port = CONFIG.get('port', 5000)
+    max_attempts = CONFIG.get('max_port_attempts', 20)
+    actual_port = find_available_port(desired_port, max_attempts=max_attempts)
+    
+    if actual_port is None:
+        logger.error(f'❌ 无法找到可用端口：从 {desired_port} 起的 {max_attempts} 个端口均被占用')
+        logger.error('请关闭占用端口的程序，或使用 --port 指定其他起始端口')
+        return
+    
+    if actual_port != desired_port:
+        logger.warning(f'[INFO] 原始端口{desired_port}被占用，已自动切换至可用端口: {actual_port}')
+    else:
+        logger.info(f'[INFO] 端口 {actual_port} 可用')
+    
+    CONFIG['port'] = actual_port  # 更新全局配置为实际使用的端口
+    
     app = web.Application()
     app.router.add_get('/', handle_index)
     app.router.add_get('/ws', handle_websocket)
+    app.router.add_get('/qr', handle_qr)
+    app.router.add_get('/desktop.html', handle_desktop)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = CONFIG.get('port', 5000)
-    await web.TCPSite(runner, '0.0.0.0', port).start()
+    await web.TCPSite(runner, '0.0.0.0', actual_port).start()
     
-    print('='*50 + f'\n🚀 豆包喵喵服务已启动\n📱 手机访问: http://{get_local_ip()}:{port}\n' + '='*50)
+    # Zeroconf 服务注册（保持引用防止 GC）
+    try:
+        from zeroconf import Zeroconf, ServiceInfo
+        zeroconf_instance = Zeroconf()
+        info = ServiceInfo(
+            '_catdb._tcp.local.',
+            f'CatDB._catdb._tcp.local.',
+            addresses=[socket.inet_aton(get_local_ip())],
+            port=actual_port,
+            properties={'path': '/'},
+        )
+        zeroconf_instance.register_service(info)
+        logger.info('🔍 Zeroconf 服务已注册')
+    except Exception as e:
+        logger.warning(f'Zeroconf 注册失败: {e}')
+    
+    local_ip = get_local_ip()
+    logger.info('='*50)
+    logger.info('🚀 豆包喵喵服务已启动')
+    logger.info(f'   本机访问：http://127.0.0.1:{actual_port}')
+    logger.info(f'   局域网其他设备访问：http://{local_ip}:{actual_port}')
+    logger.info('='*50)
+    logger.info(f'⏳ 等待手机连接... ({QR_TIMEOUT}秒后显示二维码)')
+    
+    # 启动快捷键监听
     setup_hotkey()
-    while True: await asyncio.sleep(3600)
+    
+    # 启动搜索超时检查线程
+    threading.Thread(target=search_timeout_check, daemon=True).start()
+    
+    # 启动系统托盘
+    create_tray_icon()
+    
+    # 启动 QR 队列处理器（主线程）
+    main_loop.call_later(0.1, process_qr_queue)
+    
+    # 等待关闭信号
+    await shutdown_event.wait()
+    
+    # 清理资源
+    logger.info('正在关闭服务...')
+    if zeroconf_instance:
+        try:
+            zeroconf_instance.unregister_all_services()
+            zeroconf_instance.close()
+            logger.info('Zeroconf 服务已注销')
+        except Exception as e:
+            logger.warning(f'Zeroconf 清理失败: {e}')
+    close_qr_window()
+    if tray_icon:
+        tray_icon.stop()
+    await runner.cleanup()
+    logger.info('👋 喵喵休息了')
 
+# ============== 桌面 GUI 集成 ==============
+def _get_catdb_config_path():
+    """开机自启状态持久化：%APPDATA%/CatDB/config.json（非 Windows 回退到仓库目录）"""
+    try:
+        if platform.system() == 'Windows':
+            base = os.environ.get('APPDATA') or os.path.expanduser('~')
+            d = os.path.join(base, 'CatDB')
+        else:
+            d = os.path.dirname(os.path.abspath(__file__))
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, 'config.json')
+    except Exception:
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+
+class WebviewAPI:
+    """给 pywebview 暴露的 API（方法名兼容需求书 v3.0）"""
+    
+    def start_service(self):
+        global main_loop
+        if main_loop:
+            asyncio.run_coroutine_threadsafe(start_service_async(), main_loop)
+        return {"success": True}
+    
+    def stop_service(self):
+        global main_loop
+        if main_loop:
+            asyncio.run_coroutine_threadsafe(stop_service_async(), main_loop)
+        return {"success": True}
+    
+    def get_service_status(self):
+        return {"success": True, "running": True}
+    
+    def get_auto_start(self):
+        try:
+            import json
+            with open(_get_catdb_config_path(), 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            return {"success": True, "enabled": config.get('auto_start', False)}
+        except:
+            return {"success": True, "enabled": False}
+
+    # 需求书标准命名：get_autostart_status / toggle_autostart（别名，逻辑一致）
+    def get_autostart_status(self):
+        return self.get_auto_start()
+
+    def toggle_autostart(self, enabled: bool):
+        return self.set_auto_start(enabled)
+    
+    def set_auto_start(self, enabled):
+        try:
+            import json
+            cfg_path = _get_catdb_config_path()
+            config = {}
+            try:
+                with open(cfg_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except:
+                pass
+            config['auto_start'] = enabled
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f)
+            if platform.system() == 'Windows' and enabled:
+                self._add_to_startup()
+            elif platform.system() == 'Windows' and not enabled:
+                self._remove_from_startup()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _add_to_startup(self):
+        if platform.system() == 'Windows':
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "CatDB", 0, winreg.REG_SZ, f'"{sys.executable}" --minimized')
+            winreg.CloseKey(key)
+        
+    def _remove_from_startup(self):
+        if platform.system() == 'Windows':
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+                winreg.DeleteValue(key, "CatDB")
+                winreg.CloseKey(key)
+            except:
+                pass
+    
+    def get_ip_list(self):
+        ips = []
+        try:
+            import netifaces
+            for iface in netifaces.interfaces():
+                addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
+                for addr in addrs:
+                    ip = addr.get('addr', '')
+                    if ip and not ip.startswith('127.'):
+                        ips.append(ip)
+        except:
+            try:
+                hostname = socket.gethostname()
+                ips = socket.gethostbyname_ex(hostname)[2]
+                ips = [ip for ip in ips if not ip.startswith('127.')]
+            except:
+                ips = ['127.0.0.1']
+        return {"success": True, "ips": ips}
+    
+    def get_port(self):
+        return {"success": True, "port": CONFIG.get('port', 5000)}
+    
+    def toggle_touchpad(self, enabled: bool):
+        # 直接对接上游已有后端开关：全局变量 touchpad_enabled（不重写业务逻辑）
+        global touchpad_enabled
+        touchpad_enabled = bool(enabled)
+        logger.info(f'触控板模式: {"开启" if touchpad_enabled else "关闭"}')
+        return {"success": True, "touchpad_enabled": touchpad_enabled}
+    
+    def copy_to_clipboard(self, text):
+        try:
+            pyperclip.copy(text)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def refresh_qr(self):
+        return {"success": True}
+    
+    def open_shortcut_settings(self):
+        return {"success": True}
+    
+    def get_recent_logs(self):
+        return {"success": True, "logs": []}
+    
+    def minimize_window(self):
+        return {"success": True}
+    
+    def hide_window(self):
+        return {"success": True}
+
+# API 实例
+webview_api = WebviewAPI()
+
+# 异步启动/停止服务
+async def start_service_async():
+    return True
+
+async def stop_service_async():
+    shutdown_event.set()
+    return True
+
+# ============== 修改主入口 ==============
 if __name__ == '__main__':
-    try: asyncio.run(main())
-    except KeyboardInterrupt: print('\n👋 喵喵休息了')
+    import sys
+    
+    # 检查是否以最小化模式启动（开机自启）
+    minimized = '--minimized' in sys.argv
+    
+    try:
+        parse_args()
+        
+        # 如果是最小化启动，只运行后台服务
+        if minimized:
+            asyncio.run(main())
+        else:
+            # 正常启动：启动桌面 GUI（需求书 Phase 2.5：920x660，可拖拽缩放，最小 800x600）
+            _gui_port = CONFIG.get('port', 5000)
+            _gui_url = f"http://127.0.0.1:{_gui_port}/desktop.html"
+            webview.create_window(
+                "豆包喵喵",
+                _gui_url,
+                width=920,
+                height=660,
+                min_size=(800, 600),
+                resizable=True,
+                js_api=webview_api
+            )
+            
+            # 启动后台服务线程
+            def run_backend():
+                asyncio.run(main())
+            
+            backend_thread = threading.Thread(target=run_backend, daemon=True)
+            backend_thread.start()
+            
+            # 启动 GUI（阻塞）
+            webview.start(debug=False)
+    except KeyboardInterrupt:
+        logger.info('👋 喵喵休息了')
