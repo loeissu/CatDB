@@ -31,5 +31,5 @@ exe = EXE(
     debug=False,
     console=False,
     upx=True,
-    icon='6-phone-cat_icon-icons.com_76682.ico' if os.path.exists('6-phone-cat_icon-icons.com_76682.ico') else None,
+    icon='cat_icon.ico' if os.path.exists('cat_icon.ico') else None,
 )

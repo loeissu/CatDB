@@ -28,7 +28,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.2"
+__version__ = "2.2.3"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -445,6 +445,89 @@ def send_backspaces(count):
             if i < count - 1: time.sleep(0.04)
     finally: typing_in_progress = False
 
+# ============== 手机图片 → 电脑剪贴板并粘贴到光标处 ==============
+def _set_image_clipboard(img):
+    """把 PIL 图片写入 Windows 剪贴板（CF_DIB）"""
+    import ctypes
+    import struct
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    CF_DIB = 8
+    GMEM_MOVEABLE = 0x0002
+    GMEM_ZEROINIT = 0x0040
+
+    # 必须显式声明指针/句柄签名，否则 64 位下 GlobalLock 返回的指针会被截断成 0 → 崩溃
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.restype = wintypes.BOOL
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = wintypes.LPVOID
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype = wintypes.HGLOBAL
+
+    img = img.convert('RGBA')
+    w, h = img.size
+    # 转 BGRA 自下而上（bottom-up DIB），兼容绝大多数粘贴目标
+    rows = [img.crop((0, y, w, y + 1)).tobytes('raw', 'BGRA') for y in range(h - 1, -1, -1)]
+    raw = b''.join(rows)
+    header = struct.pack('<LiiHHIIiiII', 40, w, h, 1, 32, 0, len(raw), 0, 0, 0, 0)
+    size = len(header) + len(raw)
+
+    if not user32.OpenClipboard(None):
+        raise OSError('OpenClipboard 失败')
+    try:
+        user32.EmptyClipboard()
+        h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, size)
+        if not h_mem:
+            raise OSError('GlobalAlloc 失败')
+        ptr = kernel32.GlobalLock(h_mem)
+        try:
+            ctypes.memmove(ptr, header, len(header))
+            ctypes.memmove(ptr + len(header), raw, len(raw))
+        finally:
+            kernel32.GlobalUnlock(h_mem)
+        if not user32.SetClipboardData(CF_DIB, h_mem):
+            # 失败时释放内存，避免泄漏
+            kernel32.GlobalFree(h_mem)
+            raise OSError('SetClipboardData 失败')
+        # 成功后内存归剪贴板所有，不再释放
+    finally:
+        user32.CloseClipboard()
+
+def paste_image_to_computer(image_bytes, do_paste=True):
+    """把手机发来的图片放进剪贴板，并 Ctrl+V 粘贴到电脑当前光标处"""
+    global typing_in_progress
+    if not image_bytes:
+        return False, '空数据'
+    try:
+        from io import BytesIO
+        from PIL import Image
+        img = Image.open(BytesIO(image_bytes))
+        img.load()
+        if img.width > 4096 or img.height > 4096:
+            img.thumbnail((4096, 4096), Image.LANCZOS)
+        _set_image_clipboard(img)
+        if do_paste and platform.system() == 'Windows':
+            typing_in_progress = True
+            try:
+                pyautogui.hotkey('ctrl', 'v')
+                time.sleep(0.05)
+            finally:
+                typing_in_progress = False
+        logger.info('🖼️ 已接收手机图片 %dx%d → 剪贴板' % (img.width, img.height))
+        return True, '%dx%d' % (img.width, img.height)
+    except Exception as e:
+        logger.error('接收图片失败: %s', e)
+        return False, str(e)
+
 def _resource_path(rel):
     """返回打包后(sys._MEIPASS)或源码目录下的资源绝对路径"""
     if hasattr(sys, '_MEIPASS'):
@@ -466,6 +549,24 @@ async def handle_index(req):
             text='<meta charset="utf-8"><h3 style="font-family:sans-serif">豆包喵喵资源缺失</h3>'
                  '<p style="font-family:sans-serif">未找到 www/index.html，请检查安装是否完整。</p>',
             content_type='text/html', status=500)
+async def handle_vendor(req):
+    """提供 www/vendor/ 下的第三方前端库（如 jsQR.min.js）"""
+    import re
+    name = req.match_info.get('name', '')
+    if not re.fullmatch(r'[\w.\-]+', name or ''):
+        return web.Response(status=404)
+    try:
+        p = _resource_path(os.path.join('www', 'vendor', name))
+        if not os.path.isfile(p):
+            return web.Response(status=404)
+        ctype = 'application/javascript' if name.endswith('.js') else 'application/octet-stream'
+        with open(p, 'rb') as f:
+            body = f.read()
+        return web.Response(body=body, content_type=ctype, headers={'Cache-Control': 'no-store'})
+    except Exception as e:
+        logger.error('vendor 资源读取失败 %s: %s', name, e)
+        return web.Response(status=404)
+
 async def handle_websocket(req):
     global synced_text, touchpad_enabled
     ws = web.WebSocketResponse()
@@ -519,6 +620,22 @@ async def handle_websocket(req):
                     touchpad_enabled = new_state
                     status = '开启' if new_state else '关闭'
                     logger.info(f'触控板模式: {status}')
+                elif data.get('type') == 'image':
+                    # 手机图片：解码 → 剪贴板 → 粘贴到电脑当前光标处
+                    import base64
+                    payload = data.get('data') or data.get('b64') or ''
+                    if payload.startswith('data:') and ',' in payload:
+                        payload = payload.split(',', 1)[1]
+                    try:
+                        raw = base64.b64decode(payload)
+                    except Exception:
+                        raw = b''
+                    loop = asyncio.get_event_loop()
+                    ok, info = await loop.run_in_executor(None, paste_image_to_computer, raw)
+                    try:
+                        await ws.send_json({'type': 'image_result', 'ok': ok, 'info': str(info)})
+                    except Exception:
+                        pass
     finally:
         remove_client(ws)
         logger.info('📱 断开')
@@ -879,6 +996,8 @@ def _start_service_inner():
         app.router.add_get('/ws', handle_websocket)
         app.router.add_get('/qr', handle_qr)
         app.router.add_get('/desktop.html', handle_desktop)
+        # 第三方前端库（浏览器 http 模式访问手机页时加载 jsQR 等）
+        app.router.add_get('/vendor/{name}', handle_vendor)
         # JSON API（浏览器模式的桌面 GUI 使用；pywebview 模式走 window.pywebview.api）
         app.router.add_get('/api/status', handle_api_status)
         app.router.add_get('/api/logs', handle_api_logs)

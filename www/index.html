@@ -15,10 +15,54 @@
             --accent-red: #FF8A65;
             --btn-bg: #FFFFFF;
             --line-color: #FBE9E7;
+            /* 小猫主体色（深浅主题下保持不变） */
+            --cat: #5D4037;
             /* 调整项：更密的行高，更小的顶部留白 */
             --line-height: 36px;
             --header-height: 40px; 
         }
+        /* ===== 深色主题变量 ===== */
+        html[data-theme="dark"] {
+            --bg-color: #14100D;
+            --card-bg: #221B16;
+            --text-main: #F2E3D3;
+            --text-light: #C2AFA0;
+            --accent-orange: #FFB74D;
+            --accent-red: #FF8A65;
+            --btn-bg: #2C241E;
+            --line-color: #3B2E24;
+        }
+        html[data-theme="dark"] .status-badge { background: #2E2620; color: #C2AFA0; box-shadow: none; }
+        html[data-theme="dark"] .status-badge.connected { background: #1E3A24; color: #8BE79A; }
+        html[data-theme="dark"] .status-badge.disconnected { background: #45211D; color: #FF9E96; }
+        html[data-theme="dark"] .help-bubble,
+        html[data-theme="dark"] .capsule-btn,
+        html[data-theme="dark"] .hotkey-chip,
+        html[data-theme="dark"] .tp-fab,
+        html[data-theme="dark"] .tp-footer button,
+        html[data-theme="dark"] .img-mini,
+        html[data-theme="dark"] .conn-card input {
+            background: #2A221C; border-color: #463A2F; color: var(--text-main);
+            box-shadow: 0 3px 0 #191310;
+        }
+        html[data-theme="dark"] .hotkey-bar { background: rgba(20,16,13,.94); border-color: #3B2E24; }
+        html[data-theme="dark"] .modal { background: #1E1813; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+        html[data-theme="dark"] .modal-btn.plain, html[data-theme="dark"] .setting-input,
+        html[data-theme="dark"] .setting-input-wide, html[data-theme="dark"] .conn-card select,
+        html[data-theme="dark"] .paper-card { border-color: #3B2E24; }
+        html[data-theme="dark"] .setting-input, html[data-theme="dark"] .setting-input-wide,
+        html[data-theme="dark"] .conn-card select, html[data-theme="dark"] .conn-card input { background:#2A221C; color: var(--text-main); }
+        html[data-theme="dark"] .hk-item { background: #251E18; border-color: #3B2E24; }
+        html[data-theme="dark"] .tp-surface { background: #241E18; border-color: #6E4C2E; }
+        html[data-theme="dark"] .tp-surface.active { background: #33291E; }
+        html[data-theme="dark"] .tp-hint, html[data-theme="dark"] .info-bar { color: #8A7463; }
+        html[data-theme="dark"] textarea::placeholder { color: #6B5A4B; }
+        html[data-theme="dark"] .help-bubble { border-color: #463A2F; }
+        html[data-theme="dark"] .paper-card { box-shadow: 0 4px 15px rgba(0,0,0,.45); }
+        html[data-theme="dark"] .cam-badge { background: rgba(0,0,0,.55); }
+        /* 主题跟随系统的过渡 */
+        body { transition: background-color .25s; }
+        .paper-card, .modal, .hotkey-bar { transition: background-color .25s, border-color .25s; }
 
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
         
@@ -117,14 +161,14 @@
         }
 
         .cat-head {
-            width: 90px; height: 60px; background: var(--text-main);
+            width: 90px; height: 60px; background: var(--cat);
             border-radius: 45px 45px 35px 35px; position: relative; z-index: 5;
         }
         .cat-ear {
             width: 0; height: 0;
             border-left: 14px solid transparent;
             border-right: 14px solid transparent;
-            border-bottom: 22px solid var(--text-main);
+            border-bottom: 22px solid var(--cat);
             position: absolute; top: -14px;
         }
         .cat-ear.left { left: 6px; transform: rotate(-20deg); }
@@ -185,7 +229,7 @@
         .cat-paw {
             width: 26px; height: 18px; background: #FFF8E1;
             border-radius: 13px 13px 8px 8px;
-            border: 2px solid var(--text-main); border-bottom: none;
+            border: 2px solid var(--cat); border-bottom: none;
             position: absolute; bottom: 0; z-index: 20;
             box-shadow: 0 2px 4px rgba(0,0,0,0.12);
         }
@@ -391,6 +435,71 @@
         }
         .tp-footer button:active { transform: translateY(2px); box-shadow: none; }
         .tp-footer .tp-mini { background: var(--accent-orange); color: #fff; border: none; width: 34px; height: 34px; box-shadow: 0 3px 0 #EF6C00; }
+
+        /* ===== v2.2.3 新增控件 ===== */
+        /* 爪爪打字动画（增强版：抬起+轻拍） */
+        .cat-wrapper { cursor: pointer; }
+        .typing .cat-paw.left  { animation: pawTapL .16s infinite alternate ease-out; }
+        .typing .cat-paw.right { animation: pawTapR .16s infinite alternate ease-out; animation-delay: .06s; }
+        @keyframes pawTapL { from { transform: translateY(0) rotate(0deg); } to { transform: translateY(-7px) rotate(-6deg); } }
+        @keyframes pawTapR { from { transform: translateY(0) rotate(0deg); } to { transform: translateY(-7px) rotate(6deg); } }
+        .cam-badge {
+            position: absolute; right: -6px; top: 6px; z-index: 30;
+            width: 22px; height: 22px; border-radius: 50%;
+            background: var(--accent-orange); color: #fff; font-size: 12px;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,.25);
+        }
+
+        /* 原生 App 快捷连接栏 */
+        .conn-card {
+            display: none; align-items: center; gap: 7px;
+            padding: 0 2px 10px; flex-shrink: 0;
+        }
+        body.native .conn-card { display: flex; }
+        .conn-card input {
+            flex: 1; min-width: 0; padding: 8px 11px;
+            border: 2px solid #EFEBE9; border-radius: 13px;
+            background: #fff; color: var(--text-main);
+            font-family: inherit; font-size: 14px;
+        }
+        .conn-btn {
+            flex-shrink: 0; border: none; border-radius: 13px;
+            background: var(--accent-orange); color: #fff;
+            font-size: 13px; padding: 8px 14px; font-family: inherit;
+            box-shadow: 0 3px 0 #EF6C00; cursor: pointer;
+        }
+        .conn-btn:active { transform: translateY(3px); box-shadow: none; }
+        .scan-btn {
+            flex-shrink: 0; border: none; border-radius: 13px;
+            background: #fff; border: 2px solid #EFEBE9; color: var(--text-main);
+            font-size: 17px; width: 38px; height: 38px;
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+        .scan-btn:active { transform: scale(.95); }
+
+        /* 图片发送工具条 */
+        .send-tool {
+            display: flex; align-items: center; gap: 8px;
+            padding: 2px 10px 6px; flex-shrink: 0;
+        }
+        .img-mini {
+            flex-shrink: 0; border: 2px solid #EFEBE9; background: #fff;
+            color: var(--text-main); border-radius: 12px;
+            font-size: 12px; font-family: inherit; padding: 5px 10px;
+            display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+        }
+        .img-mini:active { transform: translateY(2px); }
+        .sent-chip {
+            display: none; align-items: center; gap: 6px;
+            background: #E8F5E9; border-radius: 10px; padding: 3px 8px 3px 3px;
+            font-size: 11px; color: #2E7D32; max-width: 46%;
+        }
+        .sent-chip img {
+            width: 22px; height: 22px; border-radius: 6px; object-fit: cover;
+        }
+        .sent-chip.dark { background: #1E3A24; color: #8BE79A; }
+        .sent-msg { font-size: 11px; color: #BCAAA4; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     </style>
 </head>
 <body>
@@ -428,9 +537,17 @@
             </div>
             <div class="cat-paw left"></div>
             <div class="cat-paw right"></div>
+            <div class="cam-badge" id="camBadge" title="点我发送图片到电脑">📷</div>
         </div>
 
         <button class="capsule-btn clear" id="clearBtn"><span>🗑️</span> 清空</button>
+    </div>
+
+    <!-- 原生 App 快捷连接：扫码 / 手动填写电脑地址 -->
+    <div class="conn-card" id="connCard">
+        <button class="scan-btn" id="scanBtn" title="扫电脑端二维码连接">📷</button>
+        <input type="text" id="connAddr" placeholder="电脑 IP:端口，如 192.168.1.100:5000" inputmode="url" autocomplete="off">
+        <button class="conn-btn" id="connGo">连接</button>
     </div>
 
     <div class="paper-card">
@@ -440,6 +557,11 @@
             placeholder="点击这里，告诉猫猫你想写什么..."
             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
         ></textarea>
+        <div class="send-tool" id="sendTool">
+            <button class="img-mini" id="imgBtn">🖼️ 发图片</button>
+            <span class="sent-chip" id="sentChip"></span>
+            <span class="sent-msg" id="sentMsg"></span>
+        </div>
         <div class="tp-pad" id="tpPad">
             <div class="tp-header">
                 <span>🖱️ 触控板</span>
@@ -472,9 +594,9 @@
     <div class="modal-overlay" id="settingsModal">
         <div class="modal">
             <h3 style="text-align:center; margin-bottom:20px;">⚙️ 喵喵设置</h3>
-            <div class="setting-row">
-                <span>电脑地址</span>
-                <input type="text" class="setting-input" id="serverAddr" placeholder="192.168.1.100:5000">
+            <div class="setting-row" style="align-items:center;">
+                <span style="flex-shrink:0;">电脑地址</span>
+                <input type="text" id="serverAddr" placeholder="192.168.1.100:5000" autocomplete="off" style="flex:1; min-width:0; margin:0 6px; padding:7px 9px; border:2px solid #EFEBE9; border-radius:10px; font-family:inherit; font-size:14px; color:var(--text-main); background:#fff;">
                 <button class="hk-add-btn" id="serverConnectBtn" style="flex-shrink:0;">连接</button>
             </div>
             <div style="font-size:11px; color:#BCAAA4; margin:-8px 0 12px;">
@@ -491,6 +613,14 @@
             <div class="setting-row">
                 <span>检测电脑键盘</span>
                 <input type="checkbox" id="detectKeyboard" style="width:20px; height:20px;" checked>
+            </div>
+            <div class="setting-row">
+                <span>外观主题</span>
+                <select id="themeSel" style="flex:1; margin-left:10px; padding:6px 8px; border:2px solid #EFEBE9; border-radius:10px; font-family:inherit; font-size:14px; color:var(--text-main); background:#fff;">
+                    <option value="auto">跟随系统</option>
+                    <option value="light">浅色</option>
+                    <option value="dark">深色</option>
+                </select>
             </div>
             <div class="hk-section">
                 <div class="hk-header">
@@ -518,6 +648,10 @@
             <button class="modal-btn" onclick="closeModal('helpModal')">明白啦</button>
         </div>
     </div>
+
+    <!-- 相机/扫码隐藏入口 -->
+    <input type="file" id="scanFile" accept="image/*" capture="environment" style="display:none">
+    <input type="file" id="imgFile" accept="image/*" style="display:none">
 
     <!-- 快捷键编辑弹窗 -->
     <div class="modal-overlay" id="editHotkeyModal">
@@ -556,6 +690,7 @@
         </div>
     </div>
 
+    <script src="vendor/jsQR.min.js"></script>
     <script>
         const input = document.getElementById('input');
         const status = document.getElementById('status');
@@ -675,11 +810,15 @@
             requestAnimationFrame(() => requestAnimationFrame(() => input.focus()));
         }
 
+        let typingIdleTimer = null;
+        function stopTypingAnim() { catAnim.classList.remove('typing'); }
         input.addEventListener('input', () => {
             catAnim.classList.add('typing');
+            if (typingIdleTimer) clearTimeout(typingIdleTimer);
+            typingIdleTimer = setTimeout(stopTypingAnim, 900);
             // 输入法换行：视为发送，同步到电脑回车后立即清空手机输入框
             if (input.value.includes('\\n')) {
-                catAnim.classList.remove('typing');
+                stopTypingAnim();
                 performClear();
                 return;
             }
@@ -1055,6 +1194,153 @@
             // iOS 等平台禁止脚本自动弹键盘，改为用户首次触摸页面任意处时聚焦唤起
             document.addEventListener('touchstart', () => { try { input.focus(); } catch(e) {} }, { once: true });
         };
+    </script>
+    <script>
+    // ================= v2.2.3 功能增强（主题/扫码/图片发送） =================
+    (function () {
+        const $ = id => document.getElementById(id);
+        const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+        // 原生 App 或手机浏览器（触屏）都显示“扫码/手动地址”快捷连接卡
+        if (isNative || ('ontouchstart' in window)) document.body.classList.add('native');
+
+        /* ---------- 深浅色主题（浅 / 深 / 跟随系统）+ 状态栏同步 ---------- */
+        const themeSel = $('themeSel');
+        const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+        function applyTheme() {
+            let pref = localStorage.getItem('theme');
+            if (pref !== 'light' && pref !== 'dark') pref = 'auto';
+            const dark = pref === 'dark' || (pref === 'auto' && mq && mq.matches);
+            document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+            const chip = $('sentChip');
+            if (chip) chip.classList.toggle('dark', dark);
+            // 原生状态栏随主题：浅色=米色底+深色图标；深色=深底+浅图标
+            try {
+                if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar) {
+                    const SB = window.Capacitor.Plugins.StatusBar;
+                    if (SB.setOverlaysWebView) SB.setOverlaysWebView({ overlay: false });
+                    if (SB.setBackgroundColor) SB.setBackgroundColor({ color: dark ? '#14100D' : '#F9F5F0' });
+                    if (SB.setStyle) SB.setStyle({ style: dark ? 'LIGHT' : 'DARK' });
+                }
+            } catch (e) {}
+        }
+        themeSel.value = (localStorage.getItem('theme') === 'light' || localStorage.getItem('theme') === 'dark')
+            ? localStorage.getItem('theme') : 'auto';
+        themeSel.addEventListener('change', () => { localStorage.setItem('theme', themeSel.value); applyTheme(); });
+        if (mq) mq.addEventListener('change', () => { if ((localStorage.getItem('theme') || 'auto') === 'auto') applyTheme(); });
+        applyTheme();
+
+        /* ---------- 手动电脑地址：真正可改 + 扫码 + 双输入框联动 ---------- */
+        const connAddr = $('connAddr'), serverAddr = $('serverAddr');
+        function syncAddrs() {
+            connAddr.value = serverAddr.value = currentTarget();
+        }
+        connAddr.addEventListener('input', () => { serverAddr.value = connAddr.value; });
+        serverAddr.addEventListener('input', () => { connAddr.value = serverAddr.value; });
+        serverAddr.addEventListener('change', () => { if (serverAddr.value) { localStorage.setItem('serverAddr', normalizeAddr(serverAddr.value)); } });
+        connAddr.addEventListener('change', () => { if (connAddr.value) localStorage.setItem('serverAddr', normalizeAddr(connAddr.value)); });
+        function goConnect() {
+            serverAddr.value = connAddr.value;
+            saveServerAddrAndConnect();
+        }
+        $('connGo').onclick = goConnect;
+        connAddr.addEventListener('keydown', e => { if (e.key === 'Enter') goConnect(); });
+        syncAddrs();
+
+        /* ---------- 扫码连接：读图 → jsQR 解码 → 自动填地址并连接 ---------- */
+        $('scanBtn').onclick = () => $('scanFile').click();
+        $('scanFile').addEventListener('change', function () {
+            const file = this.files && this.files[0];
+            this.value = '';
+            if (!file) return;
+            const url = URL.createObjectURL(file);
+            const img = new Image();
+            img.onload = function () {
+                try {
+                    const c = document.createElement('canvas');
+                    c.width = img.width; c.height = img.height;
+                    c.getContext('2d').drawImage(img, 0, 0);
+                    const code = jsQR(c.getContext('2d').getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+                    URL.revokeObjectURL(url);
+                    const txt = code && code.data ? code.data : '';
+                    const m = txt.match(/^https?:\/\/([^:/]+):?(\d+)?/i);
+                    if (m && m[1]) {
+                        const host = m[1];
+                        const port = m[2] || (location.port || '5000');
+                        connAddr.value = serverAddr.value = host + ':' + port;
+                        saveServerAddrAndConnect();
+                        status.textContent = '扫码成功，连接中'; status.className = 'status-badge disconnected';
+                    } else {
+                        status.textContent = '未识别到二维码'; status.className = 'status-badge disconnected';
+                    }
+                } catch (err) {
+                    status.textContent = '扫码失败'; status.className = 'status-badge disconnected';
+                }
+            };
+            img.onerror = () => { URL.revokeObjectURL(url); status.textContent = '图片读取失败'; };
+            img.src = url;
+        });
+
+        /* ---------- 图片发送到电脑（输入框按钮 + 点击小猫头像均可触发） ---------- */
+        function pickImage() { $('imgFile').click(); }
+        $('imgBtn').onclick = pickImage;
+        $('catAnim').onclick = pickImage;
+        $('camBadge').onclick = function (e) { e.stopPropagation(); pickImage(); };
+
+        function fileToDataUrl(f) {
+            return new Promise((res, rej) => {
+                const r = new FileReader();
+                r.onload = () => res(r.result);
+                r.onerror = rej;
+                r.readAsDataURL(f);
+            });
+        }
+        function downscale(dataUrl, max, q) {
+            return new Promise(res => {
+                const im = new Image();
+                im.onload = () => {
+                    let w = im.width, h = im.height;
+                    if (!w || !h) return res(dataUrl);
+                    if (w > max || h > max) {
+                        const s = Math.min(max / w, max / h);
+                        w = Math.max(1, Math.round(w * s)); h = Math.max(1, Math.round(h * s));
+                    }
+                    const c = document.createElement('canvas');
+                    c.width = w; c.height = h;
+                    c.getContext('2d').drawImage(im, 0, 0, w, h);
+                    res(c.toDataURL('image/jpeg', q || 0.88));
+                };
+                im.onerror = () => res(dataUrl);
+                im.src = dataUrl;
+            });
+        }
+        $('imgFile').addEventListener('change', async function () {
+            const file = this.files && this.files[0];
+            this.value = '';
+            if (!file) return;
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                status.textContent = '未连接电脑，请先连接'; status.className = 'status-badge disconnected';
+                return;
+            }
+            const msg = $('sentMsg');
+            msg.textContent = '图片处理中…';
+            try {
+                const dataUrl = await downscale(await fileToDataUrl(file), 1600);
+                const chip = $('sentChip');
+                const im = new Image();
+                im.src = dataUrl;
+                chip.innerHTML = '';
+                chip.appendChild(im);
+                chip.style.display = 'inline-flex';
+                ws.send(JSON.stringify({ type: 'image', name: file.name || 'photo', data: dataUrl }));
+                msg.textContent = '已发送，电脑将粘贴到光标处 ✓';
+                status.textContent = '已发送图片'; status.className = 'status-badge connected';
+                stopTypingAnim();
+            } catch (err) {
+                msg.textContent = '图片发送失败：' + err;
+            }
+            setTimeout(() => { msg.textContent = ''; }, 4000);
+        });
+    })();
     </script>
 </body>
 </html>

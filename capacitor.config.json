@@ -1,8 +1,8 @@
 {
   "appId": "com.loeissu.catdb",
   "appName": "豆包喵喵",
-  "version": "2.2.2",
-  "appVersion": "2.2.2",
+  "version": "2.2.3",
+  "appVersion": "2.2.3",
   "webDir": "www",
   "server": {
     "androidScheme": "http"

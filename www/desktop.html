@@ -248,6 +248,8 @@
         padding: 3px 9px; border-radius: 7px; transition: background .15s;
     }
     .clear-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+    .logbar.collapsed { height: 38px !important; min-height: 38px !important; }
+    .logbar.collapsed .logs { display: none; }
     .logs {
         flex: 1 1 auto; overflow-y: auto; padding: 7px 14px 12px;
         font-family: var(--mono); font-size: 12px; line-height: 1.65;
@@ -362,19 +364,17 @@
     <!-- 左：控制 -->
     <section class="col left">
         <span class="ct">控制</span>
-        <button class="power-btn" id="powerBtn">启动服务</button>
-        <div class="row-opt">
-            <span>触控板模式</span>
+        <button class="power-btn" id="powerBtn"
+                title="启动服务后，手机扫码右侧二维码即可连接输入（需同一 Wi-Fi）">启动服务</button>
+        <div class="row-opt" title="开启后，手机可当作无线触控板操控电脑鼠标">
+            <span>触控板</span>
             <label class="switch"><input type="checkbox" id="tpChk"><span class="track"></span></label>
         </div>
-        <p class="desc" id="tpStateHint">开启后手机可作无线触控板操控电脑</p>
+        <p class="desc" id="tpStateHint"></p>
         <hr class="hsep">
-        <button class="entry-btn" id="hkEntry">⌨️ 清屏快捷键<span class="sub" id="hkCurrent" style="margin-left:6px;">F9</span><span class="chev">›</span></button>
-        <hr class="hsep">
-        <span class="ct">使用提示</span>
-        <p class="desc">1 · 点击「启动服务」，用手机扫右侧二维码<br>
-        2 · 手机与电脑需在同一 Wi-Fi<br>
-        3 · 电脑介入输入后，手机会自动翻篇续写</p>
+        <button class="entry-btn" id="hkEntry" title="清屏热键：手机上点清空，或在电脑上按该键">⌨️ 清屏<span class="sub" id="hkCurrent" style="margin-left:6px;">F9</span><span class="chev">›</span></button>
+        <div style="margin-top:auto;"></div>
+        <button class="entry-btn" id="helpDesktopBtn" title="常见问题与连接说明">❓ 帮助</button>
     </section>
 
     <!-- 中：扫码 -->
@@ -394,37 +394,51 @@
                 </div>
                 <div class="addr-sub" id="wsAddr">ws://—/ws</div>
             </div>
-            <div class="qr-tip">二维码自动刷新 · 右侧可切换 IP 重新生成</div>
+            <div class="qr-tip" style="opacity:0;height:0;pointer-events:none;"></div>
         </div>
     </section>
 
     <!-- 右：信息 -->
     <section class="col right">
         <span class="mode-tag" id="modeTag">桌面模式</span>
-        <div>
+        <div title="零配置发现服务：手机在局域网内可自动找到电脑">
             <span class="ct">服务发现</span>
             <div style="margin-top:9px;" class="svc-chip"><span class="pulse"></span>CatDB · _catdb._tcp.local.</div>
         </div>
-        <div>
+        <div title="点击 IP 即可切换并重新生成二维码/地址">
             <span class="ct">本机地址</span>
             <div class="ip-tags" id="ipTags" style="margin-top:10px;"></div>
         </div>
-        <hr class="hsep">
-        <p class="notes">• 手机浏览器直接访问上方地址<br>
-        • 安卓 App：设置 → <b>电脑地址</b> 填入 IP:端口<br>
-        • 无法连接？放行防火墙对 <b>CatDB</b> 的访问</p>
     </section>
 </main>
 
 <!-- 日志 -->
-<footer class="logbar">
+<footer class="logbar" id="logBar">
     <div class="loghead">
         <span class="lt">运行日志</span>
         <span class="sp"></span>
+        <button class="clear-btn" id="logToggle" title="展开 / 收起日志">收起</button>
         <button class="clear-btn" id="clearLogsBtn">清空</button>
     </div>
     <div class="logs" id="logs"></div>
 </footer>
+
+<!-- 帮助弹窗 -->
+<div class="overlay hidden" id="helpModal">
+    <div class="modal">
+        <h3>❓ 连接帮助</h3>
+        <p class="msub" style="text-align:left;line-height:1.9;font-size:13px;">
+            ① 点击「启动服务」，右侧生成二维码与地址<br>
+            ② 手机浏览器扫二维码即可连接（同一 Wi-Fi）<br>
+            ③ 安卓 App：设置中填入 电脑IP:端口，或用📷扫码<br>
+            ④ 连不上？放行 Windows 防火墙对 CatDB 的访问<br>
+            ⑤ 端口被占用会自动换新端口，以界面显示为准
+        </p>
+        <div class="m-actions">
+            <button class="m-btn pri" id="helpOk">知道了</button>
+        </div>
+    </div>
+</div>
 
 <!-- 快捷键弹窗 -->
 <div class="overlay hidden" id="hkModal">
@@ -637,6 +651,23 @@ $('autostartChk').addEventListener('change', async (e) => {
 });
 
 $('clearLogsBtn').onclick = () => { backend('clear_logs'); $('logs').innerHTML = ''; };
+
+/* 日志收起/展开 */
+(function () {
+    const bar = $('logBar'), tog = $('logToggle');
+    const apply = c => {
+        bar.classList.toggle('collapsed', c);
+        tog.textContent = c ? '展开' : '收起';
+        try { localStorage.setItem('logCollapsed', c ? '1' : '0'); } catch (e) {}
+    };
+    tog.onclick = () => apply(!bar.classList.contains('collapsed'));
+    try { apply(localStorage.getItem('logCollapsed') === '1'); } catch (e) {}
+})();
+
+/* 帮助弹窗 */
+$('helpDesktopBtn').onclick = () => $('helpModal').classList.remove('hidden');
+$('helpOk').onclick = () => $('helpModal').classList.add('hidden');
+$('helpModal').addEventListener('click', e => { if (e.target === $('helpModal')) $('helpModal').classList.add('hidden'); });
 
 $('copyHttp').onclick = async () => {
     const text = $('httpAddr').textContent;
