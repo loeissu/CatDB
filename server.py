@@ -28,7 +28,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.6"
+__version__ = "2.2.7"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -752,6 +752,25 @@ async def handle_desktop(req):
     except Exception as e:
         return web.Response(text=f'desktop.html load failed: {e}', status=500)
 
+
+async def handle_vendor_asset(req):
+    """www/vendor/*（Capacitor 运行时/插件代理），浏览器访问手机页时可正常加载"""
+    name = (req.match_info.get('name') or '')
+    if not name or '/' in name or '\\' in name or '..' in name:
+        return web.Response(status=404)
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'www', 'vendor', name)
+        if not os.path.exists(path) and hasattr(sys, '_MEIPASS'):
+            path = os.path.join(sys._MEIPASS, 'www', 'vendor', name)
+        if not os.path.isfile(path):
+            return web.Response(status=404)
+        with open(path, 'rb') as f:
+            data = f.read()
+        ctype = 'application/javascript' if name.endswith('.js') else 'application/octet-stream'
+        return web.Response(body=data, content_type=ctype, headers={'Cache-Control': 'no-cache'})
+    except Exception:
+        return web.Response(status=404)
+
 # ============== 日志回环缓冲（供桌面 GUI 日志面板） ==============
 import collections
 LOG_BUFFER = collections.deque(maxlen=400)
@@ -1010,6 +1029,7 @@ def _start_service_inner():
         app.router.add_get('/ws', handle_websocket)
         app.router.add_get('/qr', handle_qr)
         app.router.add_get('/desktop.html', handle_desktop)
+        app.router.add_get('/vendor/{name:.*}', handle_vendor_asset)
         # JSON API（浏览器模式的桌面 GUI 使用；pywebview 模式走 window.pywebview.api）
         app.router.add_get('/api/status', handle_api_status)
         app.router.add_get('/api/logs', handle_api_logs)

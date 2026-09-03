@@ -1,12 +1,17 @@
 <resources>
-    <!-- 纯色状态栏方案：AppTheme 必须存在，供 AndroidManifest 引用 -->
+    <!-- 浅色主题冷启动：页面顶/底米色与 App 浅色主题一致；
+         windowLightStatusBar=true 让状态栏图标为深色，浅底上清晰可见 -->
     <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="android:statusBarColor">#F9F5F0</item>
         <item name="android:navigationBarColor">#F9F5F0</item>
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">#F9F5F0</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
     </style>
     <style name="AppTheme.NoActionBarLaunch" parent="AppTheme">
         <item name="android:statusBarColor">#F9F5F0</item>
         <item name="android:navigationBarColor">#F9F5F0</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

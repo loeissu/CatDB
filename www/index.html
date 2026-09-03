@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>豆包喵喵</title>
+    <!-- Capacitor 运行时（原生桥）与状态栏插件代理：无打包环境的纯 HTML 也要能调原生状态栏 -->
+    <script src="vendor/capacitor.js"></script>
+    <script src="vendor/status-bar.js"></script>
     <!-- 移除 Google Fonts 硬依赖，改用系统字体栈 -->
     <style>
         :root {
@@ -392,6 +395,26 @@
         .setting-input-wide { flex: 1; min-width: 0; padding: 6px 8px; border: 2px solid #EFEBE9; border-radius: 8px; font-family: inherit; font-size: 15px; color: var(--text-main); background: #fff; }
         .hk-empty { text-align: center; font-size: 12px; color: #BCAAA4; padding: 8px 0; }
 
+        /* 主题感知表单控件（地址输入 / 外观主题下拉）：颜色随深浅主题变化，不再硬编码白底 */
+        .theme-field {
+            flex: 1; min-width: 0; margin: 0 6px;
+            padding: 7px 9px; border: 2px solid #EFEBE9; border-radius: 10px;
+            font-family: inherit; font-size: 14px;
+            color: var(--text-main); background: #fff;
+            -webkit-appearance: none; appearance: none;
+        }
+        html[data-theme="dark"] .theme-field {
+            background: #2A221C; border-color: #463A2F; color: var(--text-main);
+        }
+        html[data-theme="dark"] .theme-field option {
+            background: #2A221C; color: var(--text-main);
+        }
+        #themeSel.theme-field {
+            background-image: linear-gradient(45deg, transparent 50%, var(--text-light) 50%), linear-gradient(135deg, var(--text-light) 50%, transparent 50%);
+            background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%;
+            background-size: 5px 5px; background-repeat: no-repeat;
+        }
+
         /* 局域网扫描结果 */
         .lan-item {
             display: flex; align-items: center; gap: 8px;
@@ -569,7 +592,7 @@
             <h3 style="text-align:center; margin-bottom:20px;">⚙️ 喵喵设置</h3>
             <div class="setting-row" style="align-items:center;">
                 <span style="flex-shrink:0;">电脑地址</span>
-                <input type="text" id="serverAddr" placeholder="192.168.1.100:5000" autocomplete="off" style="flex:1; min-width:0; margin:0 6px; padding:7px 9px; border:2px solid #EFEBE9; border-radius:10px; font-family:inherit; font-size:14px; color:var(--text-main); background:#fff;">
+                <input type="text" id="serverAddr" placeholder="192.168.1.100:5000" autocomplete="off" class="theme-field">
                 <button class="hk-add-btn" id="serverConnectBtn" style="flex-shrink:0;">连接</button>
             </div>
             <div style="font-size:11px; color:#BCAAA4; margin:-8px 0 12px;">
@@ -589,7 +612,7 @@
             </div>
             <div class="setting-row">
                 <span>外观主题</span>
-                <select id="themeSel" style="flex:1; margin-left:10px; padding:6px 8px; border:2px solid #EFEBE9; border-radius:10px; font-family:inherit; font-size:14px; color:var(--text-main); background:#fff;">
+                <select id="themeSel" class="theme-field" style="flex:1; margin-left:10px;">
                     <option value="auto">跟随系统</option>
                     <option value="light">浅色</option>
                     <option value="dark">深色</option>
@@ -1227,10 +1250,12 @@
             if (pref !== 'light' && pref !== 'dark') pref = 'auto';
             const dark = pref === 'dark' || (pref === 'auto' && mq && mq.matches);
             document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-            // 原生状态栏随主题：浅色=米色底+深色图标；深色=深底+浅图标
+            // 原生状态栏随主题：浅色=米色底+深色图标；深色=深底+浅图标。
+            // 仅在真正的原生 App 里调用（浏览器无原生桥，避免误调）；插件由 vendor 脚本注册。
+            if (!isNative) return;
             try {
-                if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar) {
-                    const SB = window.Capacitor.Plugins.StatusBar;
+                const SB = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
+                if (SB) {
                     if (SB.setOverlaysWebView) SB.setOverlaysWebView({ overlay: false });
                     if (SB.setBackgroundColor) SB.setBackgroundColor({ color: dark ? '#14100D' : '#F9F5F0' });
                     if (SB.setStyle) SB.setStyle({ style: dark ? 'LIGHT' : 'DARK' });
@@ -1242,6 +1267,10 @@
         themeSel.addEventListener('change', () => { localStorage.setItem('theme', themeSel.value); applyTheme(); });
         if (mq) mq.addEventListener('change', () => { if ((localStorage.getItem('theme') || 'auto') === 'auto') applyTheme(); });
         applyTheme();
+        // 状态栏可能在页面完全加载/回到前台时才稳定，多个时机重复同步（幂等，无副作用）
+        document.addEventListener('DOMContentLoaded', applyTheme);
+        window.addEventListener('load', applyTheme);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) applyTheme(); });
         /* ---------- 图片/拍照发送到电脑：点小猫头像=选图；右下角📷=拍照 ---------- */
 
         function fileToDataUrl(f) {

@@ -1,0 +1,17 @@
+<resources>
+    <!-- 深色（系统夜间）主题冷启动：深棕底与 App 深色主题一致；
+         windowLightStatusBar=false 让状态栏图标为浅色，深底上清晰可见 -->
+    <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:statusBarColor">#14100D</item>
+        <item name="android:navigationBarColor">#14100D</item>
+        <item name="android:windowBackground">#14100D</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+    <style name="AppTheme.NoActionBarLaunch" parent="AppTheme">
+        <item name="android:statusBarColor">#14100D</item>
+        <item name="android:navigationBarColor">#14100D</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
