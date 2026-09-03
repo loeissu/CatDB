@@ -473,6 +473,14 @@
         <div class="modal">
             <h3 style="text-align:center; margin-bottom:20px;">⚙️ 喵喵设置</h3>
             <div class="setting-row">
+                <span>电脑地址</span>
+                <input type="text" class="setting-input" id="serverAddr" placeholder="192.168.1.100:5000">
+                <button class="hk-add-btn" id="serverConnectBtn" style="flex-shrink:0;">连接</button>
+            </div>
+            <div style="font-size:11px; color:#BCAAA4; margin:-8px 0 12px;">
+                💡 手机浏览器打开电脑页面时自动连接，无需填写。<br>安卓 App 需手动填入电脑 IP（在电脑端窗口右上角查看）。
+            </div>
+            <div class="setting-row">
                 <span>发送延迟 (ms)</span>
                 <input type="number" class="setting-input" id="debounceDelay" value="500" step="100">
             </div>
@@ -587,19 +595,60 @@
         });
         loadSettings();
 
+        // ===== 电脑地址解析：原生 App(Capacitor localhost) 需手动填写；
+        // 手机浏览器直接打开电脑页面(http://ip:port)时自动使用 location.host =====
+        const serverAddrInput = document.getElementById('serverAddr');
+        const isNativeApp = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
+        function normalizeAddr(raw) {
+            raw = (raw || '').trim().replace(/^wss?:\/\//i, '').replace(/^https?:\/\//i, '').replace(/\/$/g, '');
+            if (!raw) return '';
+            const m = raw.match(/^(.*?)(?::(\d+))?$/);
+            const host = (m && m[1] ? m[1] : raw).trim();
+            if (!host) return '';
+            return m && m[2] ? host + ':' + m[2] : host;
+        }
+        function savedServerAddr() { return normalizeAddr(localStorage.getItem('serverAddr')); }
+        function detectedServerAddr() {
+            const h = location.hostname || '';
+            if (!h || h === 'localhost' || h === '127.0.0.1') return ''; // 原生 App / 本地文件 → 无法自动推导
+            return location.port ? h + ':' + location.port : h;
+        }
+        function currentTarget() { return savedServerAddr() || detectedServerAddr(); }
+
+        function saveServerAddrAndConnect() {
+            const addr = normalizeAddr(serverAddrInput.value);
+            if (addr) { localStorage.setItem('serverAddr', addr); serverAddrInput.value = addr; }
+            else { localStorage.removeItem('serverAddr'); }
+            if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; }
+            connect();
+            closeModal('settingsModal');
+        }
+        serverAddrInput.value = savedServerAddr() || detectedServerAddr();
+        document.getElementById('serverConnectBtn').onclick = saveServerAddrAndConnect;
+        serverAddrInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveServerAddrAndConnect(); });
+        // 未连接时点击状态徽标快速去设置地址
+        document.getElementById('status').addEventListener('click', () => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) openModal('settingsModal');
+        });
+
         let ws = null, lastSentText = '', totalSent = 0, ignoreLength = 0;
         let debounceTimer = null, autoClearTimer = null, autoClearCountdown = 0;
 
         function connect() {
-            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${location.host}/ws`);
+            const target = currentTarget();
+            if (!target) {
+                status.textContent = '需设置地址'; status.className = 'status-badge disconnected';
+                return; // 无地址时静默等待用户输入，不做无效重连
+            }
+            ws = new WebSocket(`ws://${target}/ws`);
             ws.onopen = () => {
                 status.textContent = '已连接'; status.className = 'status-badge connected';
                 ws.send(JSON.stringify({ type: 'config', detectKeyboard: detectKeyboardInput.checked }));
             };
             ws.onclose = () => {
                 status.textContent = '断开重连中'; status.className = 'status-badge disconnected';
-                setTimeout(connect, 2000);
+                if (currentTarget()) setTimeout(connect, 2000);
             };
             ws.onerror = () => ws.close();
             ws.onmessage = (e) => {

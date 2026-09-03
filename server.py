@@ -16,12 +16,17 @@ import argparse
 import queue
 import os
 import signal
+import webbrowser
 from aiohttp import web
 import aiohttp
 import pyautogui
 import pyperclip
 import subprocess
-import webview
+
+try:
+    import webview  # 桌面 GUI 依赖；未安装时仍可 --minimized/纯后端运行
+except ImportError:
+    webview = None
 
 __version__ = "2.2.0"
 
@@ -76,27 +81,19 @@ typing_in_progress = False
 rebase_triggered = False  # 标记是否已触发增量模式，避免重复触发
 pending_strip_punctuation = False  # 标记下次输入是否需要去除开头标点
 
-# 系统托盘相关
-tray_icon = None
-qr_window = None
-search_status = "searching"  # searching / connected / qr_showed
-search_start_time = None
-QR_TIMEOUT = 10  # 10秒后显示二维码
-
-# 优雅退出控制
-shutdown_event = threading.Event()
+# 系统托盘/桌面窗口相关
 zeroconf_instance = None  # 保持 Zeroconf 引用，防止 GC 导致服务注销
-
-# QR 窗口队列（主线程处理）
-qr_window_queue = queue.Queue()
 
 # 切换窗口（Alt+Tab 连续切换）状态：按住 Alt 保持 1 秒，期间再次触发只按 Tab
 hotkey_alt_held = False
 hotkey_alt_timer = None
 hotkey_alt_lock = threading.Lock()
 
-# 触控板模式开关
+# 触控板模式开关（默认开；GUI 开关会持久化到配置）
 touchpad_enabled = True
+
+# pynput 监听器句柄（快捷键/鼠标）。热键变更时先停旧的再重建，避免重复监听
+HOTKEY_LISTENERS = []
 
 # ============== 配置项 ==============
 CONFIG = {
@@ -108,14 +105,25 @@ CONFIG = {
 def parse_args():
     parser = argparse.ArgumentParser(description='豆包喵喵 - 手机语音输入 → 电脑实时上屏')
     parser.add_argument('--port', type=int, default=5000, help='初始端口 (默认: 5000)')
-    parser.add_argument('--hotkey', type=str, default='f9', help='清空快捷键 (默认: f9)')
+    parser.add_argument('--hotkey', type=str, default=None, help='清空快捷键 (默认: f9，可由配置文件覆盖)')
     parser.add_argument('--max-port-attempts', type=int, default=20, help='最大端口尝试次数 (默认: 20)')
     parser.add_argument('--minimized', action='store_true', help='最小化启动（开机自启模式，不显示窗口）')
     args = parser.parse_args()
     CONFIG['port'] = args.port
-    CONFIG['hotkey'] = args.hotkey
+    if args.hotkey:
+        CONFIG['hotkey'] = args.hotkey.strip().lower()
     CONFIG['max_port_attempts'] = args.max_port_attempts
     CONFIG['minimized'] = args.minimized
+
+def load_persisted_prefs():
+    """启动时套用持久化偏好（热键 / 触控板开关）"""
+    global touchpad_enabled
+    cfg = load_catdb_config()
+    if not CONFIG.get('hotkey') and cfg.get('hotkey'):
+        CONFIG['hotkey'] = str(cfg['hotkey']).strip().lower()
+    if 'touchpad_enabled' in cfg:
+        touchpad_enabled = bool(cfg['touchpad_enabled'])
+    CONFIG['hotkey'] = CONFIG.get('hotkey') or 'f9'
 
 # ============== 端口自动探测 ==============
 def check_port_available(host, port):
@@ -145,1018 +153,6 @@ def find_available_port(start_port, host='0.0.0.0', max_attempts=20):
 
 pyautogui.PAUSE = 0
 pyautogui.FAILSAFE = False  # 远程触控板控制场景，禁用左上角安全保护（否则移动到角落会抛异常）
-HTML_PAGE = '''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>豆包喵喵</title>
-    <!-- 移除 Google Fonts 硬依赖，改用系统字体栈 -->
-    <style>
-        :root {
-            --bg-color: #FFF9F0;
-            --card-bg: #FFFFFF;
-            --text-main: #5D4037;
-            --text-light: #8D6E63;
-            --accent-orange: #FFB74D;
-            --accent-red: #FF8A65;
-            --btn-bg: #FFFFFF;
-            --line-color: #FBE9E7;
-            /* 调整项：更密的行高，更小的顶部留白 */
-            --line-height: 36px;
-            --header-height: 40px; 
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-        
-        body {
-            font-family: 'ZCOOL KuaiLe', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'WenQuanYi Micro Hei', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            /* 底部留白：压缩hotkey bar高度后同步缩减，保持不遮挡主内容 */
-            padding: 12px 14px calc(68px + env(safe-area-inset-bottom));
-            overflow: hidden;
-        }
-
-        /* === 顶部栏 === */
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
-            padding-bottom: 5px;
-            /* 减少底部 margin，因为我们在 control-area 加了 margin-top */
-            margin-bottom: 0px; 
-        }
-
-        .brand-container { width: 100px; display: flex; justify-content: center; }
-        .brand {
-            font-size: 26px;
-            display: flex; align-items: center;
-            text-shadow: 2px 2px 0px rgba(93, 64, 55, 0.15);
-            line-height: 1; white-space: nowrap;
-        }
-
-        .status-container { width: 100px; display: flex; justify-content: center; }
-        .status-badge {
-            font-size: 13px; padding: 4px 10px; border-radius: 14px;
-            background: #EFEBE9; color: var(--text-light);
-            line-height: 1.2; display: flex; align-items: center;
-            box-shadow: inset 0 2px 5px rgba(0,0,0,0.03); white-space: nowrap;
-        }
-        .status-badge.connected { background: #C8E6C9; color: #2E7D32; }
-        .status-badge.disconnected { background: #FFCDD2; color: #C62828; }
-
-        /* 浮动气泡 */
-        .help-bubble {
-            background: #fff; border: 2px solid #EFEBE9;
-            padding: 5px 14px; border-radius: 20px;
-            font-size: 13px; color: var(--text-light);
-            cursor: pointer; position: relative; bottom: 2px;
-            box-shadow: 0 3px 0 #D7CCC8;
-            animation: float 3s ease-in-out infinite; 
-        }
-        .help-bubble:active { transform: translateY(3px); box-shadow: none; animation: none; }
-        .help-bubble::after {
-            content: ''; position: absolute; bottom: -6px; left: 50%; margin-left: -5px;
-            width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #EFEBE9;
-        }
-        .help-bubble::before {
-            content: ''; position: absolute; bottom: -3px; left: 50%; margin-left: -3px;
-            width: 0; height: 0; border-left: 3px solid transparent; border-right: 3px solid transparent; border-top: 4px solid #fff; z-index: 1;
-        }
-        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
-
-        /* === 核心控制区 === */
-        .control-area {
-            display: flex; justify-content: space-between; align-items: flex-end;
-            /* 按钮自身上移后，control-area 的负 margin 略回收，让猫咪爪子仍精准扒在纸卡上 */
-            margin-bottom: -18px; 
-            position: relative; z-index: 10; padding: 0 4px;
-            /* 顶部间距进一步压缩，让按钮贴"豆包喵喵"下方 */
-            margin-top: 0px; 
-        }
-
-        .capsule-btn {
-            background: var(--btn-bg); border: 2px solid #EFEBE9; color: var(--text-main);
-            height: 48px; width: 100px; border-radius: 24px;
-            display: flex; align-items: center; justify-content: center;
-            gap: 6px; font-size: 17px; font-family: inherit;
-            box-shadow: 0 4px 0 #D7CCC8; cursor: pointer;
-            /* top 负值越小（越接近0）按钮越靠下。-42 → -34：向下落 8px。 */
-            margin-bottom: 0px; transition: all 0.1s;
-            position: relative; top: -34px;
-        }
-        .capsule-btn:active { transform: translateY(4px); box-shadow: none; }
-        .capsule-btn.clear { background: var(--accent-orange); color: #fff; border-color: #FFA726; box-shadow: 0 4px 0 #EF6C00; }
-        .capsule-btn.clear:active { box-shadow: none; }
-
-        /* === 猫猫容器 === */
-        .cat-wrapper {
-            width: 130px; height: 85px;
-            position: relative; display: flex; justify-content: center; align-items: flex-end;
-            transform-origin: bottom center;
-            transform: scale(1.25);
-            /* 按钮上移后，微调猫咪向下保持爪子仍扒在纸卡顶部边缘 */
-            margin-bottom: 8px;
-        }
-
-        .cat-head {
-            width: 90px; height: 60px; background: var(--text-main);
-            border-radius: 45px 45px 35px 35px; position: relative; z-index: 5;
-        }
-        .cat-ear {
-            width: 0; height: 0;
-            border-left: 14px solid transparent;
-            border-right: 14px solid transparent;
-            border-bottom: 22px solid var(--text-main);
-            position: absolute; top: -14px;
-        }
-        .cat-ear.left { left: 6px; transform: rotate(-20deg); }
-        .cat-ear.right { right: 6px; transform: rotate(20deg); }
-        /* 耳朵内部粉色 */
-        .cat-ear::after {
-            content: '';
-            position: absolute;
-            top: 6px; left: -5px;
-            border-left: 5px solid transparent;
-            border-right: 5px solid transparent;
-            border-bottom: 10px solid #FFAB91;
-        }
-
-        .cat-face {
-            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-            display: flex; flex-direction: column; align-items: center; width: 100%;
-        }
-        .eyes-row { display: flex; gap: 24px; }
-        .cat-eye {
-            width: 10px; height: 10px;
-            background: #fff;
-            border-radius: 50%;
-            animation: blink 4s infinite;
-            box-shadow: inset 0 0 2px rgba(0,0,0,0.2);
-        }
-        .cat-nose {
-            width: 10px; height: 7px;
-            background: var(--accent-red);
-            border-radius: 50% 50% 50% 50% / 30% 30% 70% 70%;
-            margin-top: 6px;
-        }
-
-        /* 胡须 */
-        .whiskers {
-            position: absolute;
-            top: 30px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 90px;
-            height: 16px;
-        }
-
-        .whisker {
-            position: absolute;
-            height: 1px;
-            background: rgba(255,255,255,0.85);
-        }
-
-        /* 左侧胡须 */
-        .whisker.left-1 { width: 28px; left: 0; top: 3px; transform: rotate(10deg); transform-origin: right center; }
-        .whisker.left-2 { width: 28px; left: 0; top: 11px; transform: rotate(-10deg); transform-origin: right center; }
-
-        /* 右侧胡须 */
-        .whisker.right-1 { width: 28px; right: 0; top: 3px; transform: rotate(-10deg); transform-origin: left center; }
-        .whisker.right-2 { width: 28px; right: 0; top: 11px; transform: rotate(10deg); transform-origin: left center; }
-
-        .cat-paw {
-            width: 26px; height: 18px; background: #FFF8E1;
-            border-radius: 13px 13px 8px 8px;
-            border: 2px solid var(--text-main); border-bottom: none;
-            position: absolute; bottom: 0; z-index: 20;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.12);
-        }
-        .cat-paw.left { left: 22px; }
-        .cat-paw.right { right: 22px; }
-        /* 肉垫 */
-        .cat-paw::before {
-            content: '';
-            position: absolute;
-            top: 4px; left: 50%; transform: translateX(-50%);
-            width: 8px; height: 6px;
-            background: #FFCCBC;
-            border-radius: 50%;
-        }
-
-        .typing .cat-paw.left { animation: tap 0.15s infinite alternate; }
-        .typing .cat-paw.right { animation: tap 0.15s infinite alternate-reverse; }
-        @keyframes tap { to { transform: translateY(6px); } }
-        @keyframes blink { 0%,96%,100%{transform:scaleY(1)} 98%{transform:scaleY(0.1)} }
-
-        /* === 便签纸 === */
-        .paper-card {
-            flex: 1;
-            background: var(--card-bg);
-            border-radius: 20px;
-            box-shadow: 0 4px 15px rgba(93,64,55,0.08);
-            border: 4px solid #EFEBE9;
-            display: flex; flex-direction: column;
-            /* 顶部加6px内边距，内容区远离圆角裁切边界，防止textarea渐变背景在圆角抗锯齿边缘形成白色尖角 */
-            padding: 6px 4px 10px;
-            position: relative; z-index: 1;
-            /* 裁剪子元素到圆角内，避免textarea顶部白色渐变带盖住圆角边框形成尖角 */
-            overflow: hidden;
-            /* iOS Safari专用：确保圆角裁切同时作用于背景与内容 */
-            isolation: isolate;
-            -webkit-backface-visibility: hidden;
-                    backface-visibility: hidden;
-        }
-
-        textarea {
-            flex: 1; width: 100%; border: none; outline: none; resize: none;
-            background: transparent;
-            font-family: 'ZCOOL KuaiLe', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'WenQuanYi Micro Hei', sans-serif;
-            font-size: 22px; /* 字体稍微减小以匹配密行距 */
-            color: var(--text-main);
-            line-height: var(--line-height);
-            padding: 0 16px;
-            
-            /* 顶部留白：paper-card已加6px顶部内边距，因此此处相应减小6px，保持与原总留白一致 */
-            padding-top: calc(var(--header-height) - 6px);
-            
-            background-image: 
-                linear-gradient(to bottom, var(--card-bg) calc(var(--header-height) - 6px), transparent calc(var(--header-height) - 6px)),
-                repeating-linear-gradient(
-                    transparent,
-                    transparent calc(var(--line-height) - 1px),
-                    var(--line-color) calc(var(--line-height) - 1px),
-                    var(--line-color) var(--line-height)
-                );
-            
-            background-attachment: local;
-            /* 调整背景线：让线位于行高偏下的位置，从而让文字看起来贴着线 */
-            background-position: 0 -4px; 
-            caret-color: var(--text-main);
-        }
-        textarea::placeholder { color: #D7CCC8; font-size: 20px; }
-
-        .info-bar {
-            text-align: right; padding: 5px 16px 0; font-size: 12px; color: #BCAAA4;
-            display: flex; justify-content: space-between;
-        }
-        /* 触控板手势说明：默认隐藏，触控板展开时显示在底部左侧 */
-        #tpHint { display: none; color: var(--text-light); font-size: 12px; }
-        .tp-pad.open ~ .info-bar #tpHint { display: inline; }
-        .tp-pad.open ~ .info-bar #timer { display: none; }
-
-        /* 弹窗通用 */
-        .modal-overlay {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(93, 64, 55, 0.4); z-index: 999;
-            display: none; align-items: center; justify-content: center; backdrop-filter: blur(2px);
-        }
-        .modal {
-            background: #fff; width: 85%; max-width: 320px;
-            border-radius: 24px; padding: 24px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-            animation: popUp 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
-        }
-        @keyframes popUp { from{transform: scale(0.8); opacity:0} to{transform: scale(1); opacity:1} }
-        
-        .setting-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; font-size: 16px; }
-        .setting-input { width: 70px; padding: 6px; border: 2px solid #EFEBE9; border-radius: 8px; text-align: center; font-family: inherit; font-size: 16px; color: var(--text-main); }
-        .modal-btn { width: 100%; padding: 10px; background: var(--accent-orange); color: #fff; border: none; border-radius: 12px; font-family: inherit; font-size: 16px; margin-top: 10px; }
-        /* 弹窗内容过长时可滚动 */
-        .modal { max-height: 88vh; overflow-y: auto; }
-
-        /* === 底部自定义快捷键栏 === */
-        .hotkey-bar {
-            position: fixed; bottom: 0; left: 0; right: 0;
-            display: flex; align-items: center; gap: 6px;
-            background: rgba(255, 249, 240, 0.92);
-            border-top: 2px solid #EFEBE9;
-            /* 压缩上下留白：top 10→5px, bottom 12→7px(=shadow3px+margin2px+safe区过渡) */
-            padding: 5px 10px calc(7px + env(safe-area-inset-bottom)); z-index: 500;
-            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-        }
-        .hotkey-scroll {
-            flex: 1; min-width: 0;
-            display: flex; align-items: center; gap: 6px;
-            overflow-x: auto; white-space: nowrap;
-            scrollbar-width: none; -ms-overflow-style: none;
-            /* 压缩内边距：仍保留 2px top / 6px bottom 以容纳按钮阴影(3px)和按下位移(3px) */
-            padding: 2px 0 6px;
-        }
-        .hotkey-scroll::-webkit-scrollbar { display: none; }
-        .hotkey-chip {
-            flex-shrink: 0;
-            display: inline-flex; align-items: center; gap: 3px;
-            /* 缩紧内部 padding：上下 8→6px，左右 14→12px */
-            padding: 6px 12px; border-radius: 18px;
-            background: #fff; border: 2px solid #EFEBE9;
-            box-shadow: 0 3px 0 #D7CCC8;
-            /* 字号略小：15→14，与压缩后的高度匹配 */
-            font-family: inherit; font-size: 14px; color: var(--text-main);
-            cursor: pointer; transition: all 0.1s;
-        }
-        .hotkey-chip:active { transform: translateY(3px); box-shadow: none; }
-        .hotkey-add {
-            /* 加号按钮也略缩小：38→34px */
-            flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%;
-            background: var(--accent-orange); color: #fff; border: none;
-            font-size: 18px; line-height: 1; cursor: pointer;
-            box-shadow: 0 3px 0 #EF6C00; transition: all 0.1s;
-        }
-        .hotkey-add:active { transform: translateY(3px); box-shadow: none; }
-
-        /* 设置弹窗快捷键管理区 */
-        .hk-section { margin-top: 20px; border-top: 2px dashed #FBE9E7; padding-top: 12px; }
-        .hk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 15px; }
-        .hk-add-btn {
-            background: var(--accent-orange); color: #fff; border: none;
-            border-radius: 14px; padding: 5px 12px; font-family: inherit; font-size: 13px; cursor: pointer;
-            box-shadow: 0 2px 0 #EF6C00;
-        }
-        .hk-add-btn:active { transform: translateY(2px); box-shadow: none; }
-        .hk-item {
-            display: flex; align-items: center; gap: 8px;
-            background: #FFF9F0; border: 2px solid #FBE9E7; border-radius: 12px;
-            padding: 8px 10px; margin-bottom: 8px;
-        }
-        .hk-item-icon { font-size: 18px; }
-        .hk-item-info { flex: 1; min-width: 0; }
-        .hk-item-name { font-size: 14px; }
-        .hk-locked { font-size: 10px; color: #A1887F; border: 1px solid #D7CCC8; border-radius: 6px; padding: 0 4px; margin-left: 6px; font-style: normal; vertical-align: 1px; }
-        .hk-item-desc { font-size: 11px; color: var(--text-light); }
-        .hk-item-btn { border: none; background: transparent; font-size: 14px; cursor: pointer; padding: 4px 6px; border-radius: 8px; color: var(--text-light); }
-        .hk-item-btn.del { color: #E57373; }
-        .hk-item-btn:active { background: #FBE9E7; }
-        .setting-input-wide { flex: 1; min-width: 0; padding: 6px 8px; border: 2px solid #EFEBE9; border-radius: 8px; font-family: inherit; font-size: 15px; color: var(--text-main); background: #fff; }
-        .hk-empty { text-align: center; font-size: 12px; color: #BCAAA4; padding: 8px 0; }
-
-        /* === 触控板 === */
-        .tp-fab {
-            /* bottom 从 34px 调到 18px：向纸卡底部再下挪约16px，避免看起来悬空在上方 */
-            position: absolute; left: 10px; bottom: 18px; z-index: 5;
-            width: 42px; height: 42px; border-radius: 50%;
-            background: #fff; border: 2px solid #EFEBE9;
-            box-shadow: 0 3px 0 #D7CCC8;
-            font-size: 18px; line-height: 1; cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-        }
-        .tp-fab:active { transform: translateY(3px); box-shadow: none; }
-        .tp-pad { display: none; flex: 1; flex-direction: column; min-height: 0; }
-        .tp-pad.open { display: flex; }
-        .tp-header {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 6px 12px; font-size: 14px; color: var(--text-main);
-        }
-        .tp-header small { font-size: 10px; color: #BCAAA4; margin-left: 4px; }
-        .tp-mini {
-            width: 34px; height: 34px; border-radius: 50%;
-            background: var(--accent-orange); color: #fff; border: none;
-            font-size: 18px; line-height: 1; cursor: pointer; box-shadow: 0 3px 0 #EF6C00;
-            flex-shrink: 0;
-        }
-        .tp-mini:active { transform: translateY(3px); box-shadow: none; }
-        .tp-surface {
-            flex: 1; margin: 0 12px; border-radius: 16px;
-            background: #FFF3E0; border: 3px dashed #FFCC80;
-            touch-action: none; user-select: none; -webkit-user-select: none;
-            display: flex; align-items: center; justify-content: center;
-        }
-        .tp-surface.active { background: #FFE0B2; }
-        .tp-hint { font-size: 14px; color: #BCAAA4; pointer-events: none; }
-        .tp-footer {
-            display: flex; justify-content: center; align-items: center; gap: 10px;
-            padding: 8px 0; font-size: 14px; color: var(--text-main);
-        }
-        .tp-footer button {
-            width: 32px; height: 32px; border-radius: 50%;
-            border: 2px solid #EFEBE9; background: #fff; color: var(--text-main);
-            font-size: 16px; line-height: 1; cursor: pointer; box-shadow: 0 2px 0 #D7CCC8;
-        }
-        .tp-footer button:active { transform: translateY(2px); box-shadow: none; }
-        .tp-footer .tp-mini { background: var(--accent-orange); color: #fff; border: none; width: 34px; height: 34px; box-shadow: 0 3px 0 #EF6C00; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div class="brand-container">
-            <div class="brand">豆包喵喵</div>
-        </div>
-        <div class="help-bubble" id="helpBtn">使用帮助?</div>
-        <div class="status-container">
-            <div class="status-badge disconnected" id="status">断开</div>
-        </div>
-    </div>
-
-    <div class="control-area">
-        <button class="capsule-btn" id="settingsBtn"><span>⚙️</span> 设置</button>
-        
-        <div class="cat-wrapper" id="catAnim">
-            <div class="cat-head">
-                <div class="cat-ear left"></div>
-                <div class="cat-ear right"></div>
-                <div class="cat-face">
-                    <div class="eyes-row">
-                        <div class="cat-eye"></div>
-                        <div class="cat-eye"></div>
-                    </div>
-                    <div class="cat-nose"></div>
-                </div>
-                <!-- 胡须 -->
-                <div class="whiskers">
-                    <div class="whisker left-1"></div>
-                    <div class="whisker left-2"></div>
-                    <div class="whisker right-1"></div>
-                    <div class="whisker right-2"></div>
-                </div>
-            </div>
-            <div class="cat-paw left"></div>
-            <div class="cat-paw right"></div>
-        </div>
-
-        <button class="capsule-btn clear" id="clearBtn"><span>🗑️</span> 清空</button>
-    </div>
-
-    <div class="paper-card">
-        <button class="tp-fab" id="tpFab" title="触控板">🖱️</button>
-        <textarea 
-            id="input" 
-            placeholder="点击这里，告诉猫猫你想写什么..."
-            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-        ></textarea>
-        <div class="tp-pad" id="tpPad">
-            <div class="tp-header">
-                <span>🖱️ 触控板</span>
-            </div>
-            <div class="tp-surface" id="tpSurface">
-                <div class="tp-hint">在此滑动控制电脑鼠标</div>
-            </div>
-            <div class="tp-footer">
-                <button class="tp-mini" id="tpMini" title="缩小">－</button>
-                <span>灵敏度</span>
-                <button id="tpSensDown">－</button>
-                <span id="tpSensVal">1.5</span>
-                <button id="tpSensUp">＋</button>
-            </div>
-        </div>
-        <div class="info-bar">
-            <span id="tpHint">单指移动·轻点·双击·双指滚动/右键·双击拖拽</span>
-            <span id="timer"></span>
-            <span id="stats">已同步 0 字</span>
-        </div>
-    </div>
-
-    <!-- 底部自定义快捷键栏 -->
-    <div class="hotkey-bar">
-        <div class="hotkey-scroll" id="hotkeyScroll"></div>
-        <button class="hotkey-add" id="hotkeyAddBtn">＋</button>
-    </div>
-
-    <!-- 弹窗部分 -->
-    <div class="modal-overlay" id="settingsModal">
-        <div class="modal">
-            <h3 style="text-align:center; margin-bottom:20px;">⚙️ 喵喵设置</h3>
-            <div class="setting-row">
-                <span>发送延迟 (ms)</span>
-                <input type="number" class="setting-input" id="debounceDelay" value="500" step="100">
-            </div>
-            <div class="setting-row">
-                <span>自动清空 (s)</span>
-                <input type="number" class="setting-input" id="autoClearDelay" value="0" placeholder="0禁用">
-            </div>
-            <div class="setting-row">
-                <span>检测电脑键盘</span>
-                <input type="checkbox" id="detectKeyboard" style="width:20px; height:20px;" checked>
-            </div>
-            <div class="hk-section">
-                <div class="hk-header">
-                    <span>⚡ 自定义快捷键</span>
-                    <button class="hk-add-btn" id="hkAddBtn">＋ 添加</button>
-                </div>
-                <div id="hkList"><div class="hk-empty">暂无快捷键</div></div>
-            </div>
-            <button class="modal-btn" onclick="closeModal('settingsModal')">保存设置</button>
-        </div>
-    </div>
-
-    <div class="modal-overlay" id="helpModal">
-        <div class="modal">
-            <h3 style="text-align:center; margin-bottom:15px;">📖 使用指南</h3>
-            <ul style="padding-left: 20px; line-height: 1.6; font-size: 14px; color: var(--text-main);">
-                <li style="margin-bottom:8px"><b>基本用法：</b>在横线纸上语音或打字，文字会实时“飞”到电脑光标处。</li>
-                <li style="margin-bottom:8px"><b>如何清空：</b>手机点「清空」、按换行键，或电脑按 <b style="background:#eee;padding:0 4px;border-radius:4px">F9</b> 均可。</li>
-                <li style="margin-bottom:8px"><b>电脑介入（智能续写）：</b><br>当你操作电脑（打字/点击）后，手机会自动“翻篇”，下次输入将作为新段落发送，<b>不会</b>修改你刚才在电脑上编辑的内容。</li>
-                <li><b>设置小贴士：</b><br>
-                    • <b>发送延迟</b>：语音输入建议设为 300ms 以上，让输入法有时间自动纠错。<br>
-                    • <b>检测键盘</b>：开启后才能使用“电脑介入”功能。
-                </li>
-            </ul>
-            <button class="modal-btn" onclick="closeModal('helpModal')">明白啦</button>
-        </div>
-    </div>
-
-    <!-- 快捷键编辑弹窗 -->
-    <div class="modal-overlay" id="editHotkeyModal">
-        <div class="modal">
-            <h3 style="text-align:center; margin-bottom:20px;" id="hkModalTitle">添加快捷键</h3>
-            <div class="setting-row">
-                <span>名称</span>
-                <input type="text" class="setting-input-wide" id="hkName" placeholder="如：复制">
-            </div>
-            <div class="setting-row">
-                <span>类型</span>
-                <select id="hkType" class="setting-input-wide">
-                    <option value="keys">按键组合</option>
-                    <option value="action">内置动作</option>
-                    <option value="script">启动脚本</option>
-                </select>
-            </div>
-            <div class="setting-row" id="hkKeysRow">
-                <span>按键</span>
-                <input type="text" class="setting-input-wide" id="hkKeys" placeholder="如 ctrl+c">
-            </div>
-            <div class="setting-row" id="hkActionRow" style="display:none;">
-                <span>动作</span>
-                <select class="setting-input-wide" id="hkAction">
-                    <option value="enter">回车</option>
-                    <option value="clear">清空</option>
-                    <option value="rebase">触发续写</option>
-                </select>
-            </div>
-            <div class="setting-row" id="hkScriptRow" style="display:none;">
-                <span>脚本</span>
-                <input type="text" class="setting-input-wide" id="hkCmd" placeholder="如 notepad.exe">
-            </div>
-            <button class="modal-btn" id="hkSaveBtn">保存</button>
-            <button class="modal-btn" style="background:#D7CCC8; box-shadow:0 4px 0 #BCAAA4;" onclick="closeModal('editHotkeyModal')">取消</button>
-        </div>
-    </div>
-
-    <script>
-        const input = document.getElementById('input');
-        const status = document.getElementById('status');
-        const stats = document.getElementById('stats');
-        const timer = document.getElementById('timer');
-        const catAnim = document.getElementById('catAnim');
-        
-        function openModal(id) { document.getElementById(id).style.display = 'flex'; }
-        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-        
-        document.getElementById('settingsBtn').onclick = () => openModal('settingsModal');
-        document.getElementById('helpBtn').onclick = () => openModal('helpModal');
-        document.querySelectorAll('.modal-overlay').forEach(el => el.onclick = (e) => { if(e.target === el) closeModal(el.id); });
-        document.getElementById('clearBtn').onclick = performClearWithBlur;
-
-        const debounceDelayInput = document.getElementById('debounceDelay');
-        const autoClearDelayInput = document.getElementById('autoClearDelay');
-        const detectKeyboardInput = document.getElementById('detectKeyboard');
-
-        function saveSettings() {
-            localStorage.setItem('debounceDelay', debounceDelayInput.value);
-            localStorage.setItem('autoClearDelay', autoClearDelayInput.value);
-            localStorage.setItem('detectKeyboard', detectKeyboardInput.checked);
-        }
-        function loadSettings() {
-            const s1 = localStorage.getItem('debounceDelay');
-            const s2 = localStorage.getItem('autoClearDelay');
-            const s3 = localStorage.getItem('detectKeyboard');
-            if(s1) debounceDelayInput.value = s1;
-            if(s2) autoClearDelayInput.value = s2;
-            if(s3 !== null) detectKeyboardInput.checked = s3 === 'true';
-        }
-        [debounceDelayInput, autoClearDelayInput].forEach(el => el.addEventListener('change', saveSettings));
-        detectKeyboardInput.addEventListener('change', () => {
-            saveSettings();
-            if(ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'config', detectKeyboard: detectKeyboardInput.checked }));
-        });
-        loadSettings();
-
-        let ws = null, lastSentText = '', totalSent = 0, ignoreLength = 0;
-        let debounceTimer = null, autoClearTimer = null, autoClearCountdown = 0;
-
-        function connect() {
-            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${location.host}/ws`);
-            ws.onopen = () => {
-                status.textContent = '已连接'; status.className = 'status-badge connected';
-                ws.send(JSON.stringify({ type: 'config', detectKeyboard: detectKeyboardInput.checked }));
-            };
-            ws.onclose = () => {
-                status.textContent = '断开重连中'; status.className = 'status-badge disconnected';
-                setTimeout(connect, 2000);
-            };
-            ws.onerror = () => ws.close();
-            ws.onmessage = (e) => {
-                const data = JSON.parse(e.data);
-                if(data.type === 'clear') performClear();
-                else if(data.type === 'clear_with_blur') performClearWithBlur();
-                else if(data.type === 'rebase') {
-                    ignoreLength = input.value.length; lastSentText = ''; status.textContent = '电脑介入';
-                    setTimeout(() => { if(ws.readyState===1) status.textContent='已连接'; }, 2000);
-                }
-            };
-        }
-
-        function performClear() {
-            if(debounceTimer) clearTimeout(debounceTimer);
-            sendTextDiff();
-            input.value = ''; ignoreLength = 0; lastSentText = '';
-            if(ws && ws.readyState===1) ws.send(JSON.stringify({ type: 'reset' }));
-            if(autoClearTimer) { clearInterval(autoClearTimer); timer.textContent=''; }
-        }
-
-        function performClearWithBlur() {
-            performClear(); input.blur();
-            requestAnimationFrame(() => requestAnimationFrame(() => input.focus()));
-        }
-
-        input.addEventListener('input', () => {
-            catAnim.classList.add('typing');
-            // 输入法换行：视为发送，同步到电脑回车后立即清空手机输入框
-            if (input.value.includes('\\n')) {
-                catAnim.classList.remove('typing');
-                performClear();
-                return;
-            }
-            const delay = parseInt(debounceDelayInput.value) || 500;
-            if(debounceTimer) clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                sendTextDiff(); catAnim.classList.remove('typing');
-            }, delay);
-            
-            const acDelay = parseInt(autoClearDelayInput.value) || 0;
-            if(autoClearTimer) clearInterval(autoClearTimer);
-            if(acDelay > 0 && input.value) {
-                autoClearCountdown = acDelay; timer.textContent = `${autoClearCountdown}s后清空`;
-                autoClearTimer = setInterval(() => {
-                    autoClearCountdown--;
-                    if(autoClearCountdown <= 0) { clearInterval(autoClearTimer); performClearWithBlur(); }
-                    else timer.textContent = `${autoClearCountdown}s后清空`;
-                }, 1000);
-            } else timer.textContent = '';
-        });
-
-        function sendTextDiff() {
-            const full = input.value;
-            if(full.length < ignoreLength) ignoreLength = full.length;
-            const effective = full.substring(ignoreLength);
-            if(effective === lastSentText) return;
-            if(ws && ws.readyState===1) {
-                ws.send(JSON.stringify({ type: 'diff', oldText: lastSentText, newText: effective }));
-                const diff = effective.length - lastSentText.length;
-                if(diff > 0) totalSent += diff;
-                stats.textContent = `已同步 ${totalSent} 字`;
-                lastSentText = effective;
-            }
-        }
-
-        // 注意：不拦截 Enter 按键，让输入法换行/回车正常插入换行符，
-        // 由后端 diff 同步为电脑回车键（手机软键盘换行在部分平台会触发 keydown Enter）
-
-        // ============ 自定义快捷键模块 ============
-        const DEFAULT_HOTKEYS = [
-            // 固定快捷键（切换窗口）：不可删除、不可编辑，始终排在首位
-            { id: 'hk_switch', name: '切换窗口', icon: '🔄', type: 'keys', keys: 'alt+tab', locked: true },
-            { id: 'hk1', name: 'Esc', icon: '⎋', type: 'keys', keys: 'esc' },
-            { id: 'hk2', name: '全选', icon: '🔲', type: 'keys', keys: 'ctrl+a' },
-            { id: 'hk3', name: '删除', icon: '🗑️', type: 'keys', keys: 'delete' },
-            { id: 'hk4', name: '复制', icon: '📋', type: 'keys', keys: 'ctrl+c' },
-            { id: 'hk5', name: '粘贴', icon: '📌', type: 'keys', keys: 'ctrl+v' },
-        ];
-        const hotkeyScroll = document.getElementById('hotkeyScroll');
-        const hotkeyListEl = document.getElementById('hkList');
-        const hotkeyBarEl = document.querySelector('.hotkey-bar');
-
-        // 软键盘弹出时，将底部快捷键栏顶到输入法上方。
-        // 平台差异：Android 浏览器(Chrome/Edge/默认浏览器)会自动把 fixed bottom 元素
-        // 顶到键盘上方；只有 iOS Safari 会把 fixed 元素压在键盘下，需要手动顶起。
-        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        function syncHotkeyBarPosition() {
-            if (!window.visualViewport) return;
-            const vv = window.visualViewport;
-            if (isIOS && vv.height < window.innerHeight) {
-                // iOS：键盘弹出时固定元素被压住，将 bottom 设为键盘高度顶到输入法上方
-                const kbdHeight = window.innerHeight - vv.height - vv.offsetTop;
-                hotkeyBarEl.style.bottom = Math.max(kbdHeight, 0) + 'px';
-            } else {
-                // Android/无键盘：fixed 元素已自动跟随可视区域，保持贴底
-                hotkeyBarEl.style.bottom = '0px';
-            }
-        }
-        if (window.visualViewport) {
-            window.visualViewport.addEventListener('resize', syncHotkeyBarPosition);
-            window.visualViewport.addEventListener('scroll', syncHotkeyBarPosition);
-        }
-
-        const HOTKEYS_VERSION = '5'; // 默认快捷键列表变更时递增，用于自动覆盖旧版默认数据
-        function loadHotkeys() {
-            const raw = localStorage.getItem('hotkeys');
-            const ver = localStorage.getItem('hotkeys_version');
-            let list;
-            if (!raw || ver !== HOTKEYS_VERSION) {
-                list = DEFAULT_HOTKEYS.slice();
-            } else {
-                try { list = JSON.parse(raw); } catch (e) { list = DEFAULT_HOTKEYS.slice(); }
-            }
-            // 迁移：输入法换行已自动映射为电脑回车，移除已废弃的「回车」动作项
-            list = list.filter(h => !(h.type === 'action' && h.action === 'enter'));
-            // 迁移：固定项（切换窗口）始终存在且置于首位，旧的同键项一并移除
-            const locked = DEFAULT_HOTKEYS.find(h => h.locked);
-            list = list.filter(h => !(h.locked || (h.type === 'keys' && h.keys === 'alt+tab')));
-            if (locked) list.unshift({ ...locked });
-            return list;
-        }
-        function saveHotkeys(list) {
-            localStorage.setItem('hotkeys', JSON.stringify(list));
-            localStorage.setItem('hotkeys_version', HOTKEYS_VERSION);
-        }
-
-        // 生成快捷键说明文案（用于设置列表展示）
-        function hkDesc(item) {
-            if (item.type === 'keys') return item.keys || '';
-            if (item.type === 'action') return '动作:' + (item.action || '');
-            return '脚本:' + (item.cmd || '');
-        }
-
-        // 渲染底部悬浮快捷键栏
-        function renderHotkeys() {
-            const list = loadHotkeys();
-            hotkeyScroll.innerHTML = '';
-            list.forEach(item => {
-                const btn = document.createElement('button');
-                btn.className = 'hotkey-chip';
-                btn.innerHTML = `${item.icon || ''} ${item.name}`;
-                btn.onclick = () => onHotkeyClick(item);
-                hotkeyScroll.appendChild(btn);
-            });
-            renderHotkeyList(list);
-        }
-
-        // 点击快捷键：发送到电脑端执行
-        function onHotkeyClick(item) {
-            if (!ws || ws.readyState !== WebSocket.OPEN) { alert('未连接到电脑，请先连接'); return; }
-            // 回车动作：电脑端按回车确认输入，同时清空手机端文字
-            if (item.type === 'action' && item.action === 'enter') {
-                performClearWithBlur();
-            }
-            ws.send(JSON.stringify({ type: 'shortcut', sc: item }));
-            // 收起键盘，让用户看到电脑端执行效果后继续输入
-            input.blur();
-            requestAnimationFrame(() => requestAnimationFrame(() => input.focus()));
-        }
-
-        // 渲染设置弹窗内的快捷键列表
-        function renderHotkeyList(list) {
-            if (!list.length) { hotkeyListEl.innerHTML = '<div class="hk-empty">暂无快捷键，点击右上角添加</div>'; return; }
-            hotkeyListEl.innerHTML = '';
-            list.forEach((item, idx) => {
-                const row = document.createElement('div');
-                row.className = 'hk-item';
-                const lockedTag = item.locked ? '<em class="hk-locked">固定</em>' : '';
-                const actions = item.locked ? '' : `
-                    <button class="hk-item-btn" data-act="edit">✏️</button>
-                    <button class="hk-item-btn del" data-act="del">🗑️</button>`;
-                row.innerHTML = `
-                    <span class="hk-item-icon">${item.icon || '🔘'}</span>
-                    <div class="hk-item-info">
-                        <div class="hk-item-name">${item.name}${lockedTag}</div>
-                        <div class="hk-item-desc">${hkDesc(item)}</div>
-                    </div>
-                    ${actions}
-                `;
-                if (!item.locked) {
-                    row.querySelector('[data-act="edit"]').onclick = () => openHkEditor(item);
-                    row.querySelector('[data-act="del"]').onclick = () => {
-                        list.splice(idx, 1);
-                        saveHotkeys(list);
-                        renderHotkeys();
-                    };
-                }
-                hotkeyListEl.appendChild(row);
-            });
-        }
-
-        // ===== 添加快捷键弹窗逻辑 =====
-        let editingHkId = null;
-        function openHkEditor(item) {
-            editingHkId = item ? item.id : null;
-            document.getElementById('hkModalTitle').textContent = item ? '编辑快捷键' : '添加快捷键';
-            document.getElementById('hkName').value = item ? (item.name || '') : '';
-            document.getElementById('hkType').value = item ? item.type : 'keys';
-            document.getElementById('hkKeys').value = item && item.keys ? item.keys : '';
-            document.getElementById('hkAction').value = item && item.action ? item.action : 'enter';
-            document.getElementById('hkCmd').value = item && item.cmd ? item.cmd : '';
-            syncHkRows();
-            openModal('editHotkeyModal');
-        }
-        // 根据类型切换显示对应的参数输入行
-        function syncHkRows() {
-            const t = document.getElementById('hkType').value;
-            document.getElementById('hkKeysRow').style.display = t === 'keys' ? 'flex' : 'none';
-            document.getElementById('hkActionRow').style.display = t === 'action' ? 'flex' : 'none';
-            document.getElementById('hkScriptRow').style.display = t === 'script' ? 'flex' : 'none';
-        }
-        document.getElementById('hkType').addEventListener('change', syncHkRows);
-        document.getElementById('hkSaveBtn').onclick = () => {
-            const name = document.getElementById('hkName').value.trim();
-            const type = document.getElementById('hkType').value;
-            const keys = document.getElementById('hkKeys').value.trim();
-            const action = document.getElementById('hkAction').value;
-            const cmd = document.getElementById('hkCmd').value.trim();
-            if (!name) { alert('请输入名称'); return; }
-            if (type === 'keys' && !keys) { alert('请输入按键组合'); return; }
-            if (type === 'script' && !cmd) { alert('请输入脚本命令'); return; }
-            const list = loadHotkeys();
-            if (editingHkId) {
-                const idx = list.findIndex(i => i.id === editingHkId);
-                if (idx >= 0) list[idx] = { ...list[idx], name, type, keys, action, cmd };
-            } else {
-                list.push({ id: 'hk' + Date.now(), name, type, keys, action, cmd, icon: type === 'keys' ? '⌨️' : (type === 'action' ? '⚡' : '📜') });
-            }
-            saveHotkeys(list);
-            renderHotkeys();
-            closeModal('editHotkeyModal');
-        };
-        document.getElementById('hkAddBtn').onclick = () => openHkEditor(null);
-        document.getElementById('hotkeyAddBtn').onclick = () => { openModal('settingsModal'); openHkEditor(null); };
-        renderHotkeys();
-
-        // ============ 触控板模块 ============
-        const tpFab = document.getElementById('tpFab');
-        const tpPad = document.getElementById('tpPad');
-        const tpSurface = document.getElementById('tpSurface');
-
-        // 触控板展开/收起：占据输入区位置，底部快捷键栏不受影响
-        function openTouchpad() {
-            input.blur();
-            tpFab.style.display = 'none';
-            input.style.display = 'none';
-            tpPad.classList.add('open');
-        }
-        function closeTouchpad() {
-            tpPad.classList.remove('open');
-            input.style.display = '';
-            tpFab.style.display = '';
-            requestAnimationFrame(() => requestAnimationFrame(() => input.focus()));
-        }
-        tpFab.addEventListener('click', openTouchpad);
-        document.getElementById('tpMini').addEventListener('click', closeTouchpad);
-
-        // 触控板灵敏度（存 localStorage）
-        function tpSensitivity() { return parseFloat(localStorage.getItem('tpSensitivity')) || 2; }
-        function renderTpSens() { document.getElementById('tpSensVal').textContent = tpSensitivity().toFixed(1); }
-        document.getElementById('tpSensDown').addEventListener('click', () => {
-            localStorage.setItem('tpSensitivity', Math.max(0.5, tpSensitivity() - 0.5).toFixed(1));
-            renderTpSens();
-        });
-        document.getElementById('tpSensUp').addEventListener('click', () => {
-            localStorage.setItem('tpSensitivity', Math.min(3, tpSensitivity() + 0.5).toFixed(1));
-            renderTpSens();
-        });
-        renderTpSens();
-
-        // 手势采集
-        function sendTouch(action, extra) {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
-            ws.send(JSON.stringify(Object.assign({ type: 'touch', action }, extra || {})));
-        }
-        let tpTouches = new Map();      // identifier -> {x, y}
-        let tpMode = 'none';            // none | move | scroll
-        let tpMoved = false;            // 单指是否产生位移（区分点击）
-        let tpScrollMoved = false;      // 双指是否产生滚动（区分右键）
-        let tpStartX = 0, tpStartY = 0; // 单指起始位置
-        let tpLastTap = 0;              // 上次轻点时间（用于双击/拖拽判定）
-        let tpDrag = false;             // 是否处于拖拽模式（双击第二按按住不放）
-        let tpPendingMove = null;       // 累积待发送位移
-        let tpRafId = null;
-
-        // rAF 节流发送：合并一帧内的位移
-        function tpFlushMove() {
-            tpRafId = null;
-            if (tpPendingMove && (tpPendingMove.dx || tpPendingMove.dy)) {
-                const sens = tpSensitivity();
-                sendTouch(tpDrag ? 'drag_move' : 'move', { dx: Math.round(tpPendingMove.dx * sens), dy: Math.round(tpPendingMove.dy * sens) });
-                tpPendingMove = null;
-            }
-        }
-        function tpScheduleMove(dx, dy) {
-            if (!tpPendingMove) tpPendingMove = { dx: 0, dy: 0 };
-            tpPendingMove.dx += dx;
-            tpPendingMove.dy += dy;
-            if (!tpRafId) tpRafId = requestAnimationFrame(tpFlushMove);
-        }
-
-        tpSurface.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            tpSurface.classList.add('active');
-            tpTouches.clear();
-            for (let i = 0; i < e.touches.length; i++) tpTouches.set(e.touches[i].identifier, { x: e.touches[i].clientX, y: e.touches[i].clientY });
-            if (e.touches.length === 1) {
-                const now = Date.now();
-                // 双击第二按（距上次轻点 < 300ms）→ 进入拖拽模式，按住左键
-                if (tpLastTap && now - tpLastTap < 300) {
-                    tpDrag = true;
-                    sendTouch('drag_start');
-                } else {
-                    tpDrag = false;
-                }
-                tpLastTap = 0;
-                tpMode = 'move';
-                tpMoved = false;
-                tpStartX = e.touches[0].clientX;
-                tpStartY = e.touches[0].clientY;
-            } else if (e.touches.length === 2) {
-                tpMode = 'scroll';
-                tpScrollMoved = false;
-            }
-        }, { passive: false });
-
-        tpSurface.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            // 单指变双指：切换到滚动模式
-            if (e.touches.length === 2 && tpMode !== 'scroll') {
-                tpMode = 'scroll';
-                tpScrollMoved = false;
-                tpTouches.clear();
-                for (let i = 0; i < e.touches.length; i++) tpTouches.set(e.touches[i].identifier, { x: e.touches[i].clientX, y: e.touches[i].clientY });
-                return;
-            }
-            if (tpMode === 'move' && e.touches.length === 1) {
-                const p = e.touches[0];
-                const prev = tpTouches.get(p.identifier);
-                if (!prev) return;
-                const dx = p.clientX - prev.x;
-                const dy = p.clientY - prev.y;
-                tpTouches.set(p.identifier, { x: p.clientX, y: p.clientY });
-                if (Math.abs(p.clientX - tpStartX) > 8 || Math.abs(p.clientY - tpStartY) > 8) tpMoved = true;
-                tpScheduleMove(dx, dy);
-            } else if (tpMode === 'scroll') {
-                // 双指垂直平均位移换算滚轮格数：双指上滑(dy负) → 内容向上滚动(正)
-                let totalDy = 0, cnt = 0;
-                for (let i = 0; i < e.touches.length; i++) {
-                    const p = e.touches[i];
-                    const prev = tpTouches.get(p.identifier);
-                    if (prev) { totalDy += p.clientY - prev.y; cnt++; }
-                    tpTouches.set(p.identifier, { x: p.clientX, y: p.clientY });
-                }
-                if (cnt) {
-                    const units = Math.round(-(totalDy / cnt) / 10);
-                    if (units) { tpScrollMoved = true; sendTouch('scroll', { dy: units }); }
-                }
-            }
-        }, { passive: false });
-
-        tpSurface.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            tpSurface.classList.remove('active');
-            if (tpMode === 'move' && e.touches.length === 0) {
-                if (tpDrag) {
-                    // 先 flush 残余拖拽位移（保持 drag_move），再松开左键
-                    if (tpRafId) { cancelAnimationFrame(tpRafId); tpRafId = null; tpFlushMove(); }
-                    sendTouch('drag_end');
-                    tpDrag = false;
-                } else {
-                    if (!tpMoved) {
-                        const now = Date.now();
-                        if (now - tpLastTap < 300) { sendTouch('double_tap'); tpLastTap = 0; }
-                        else { tpLastTap = now; sendTouch('tap'); }
-                    }
-                    if (tpRafId) { cancelAnimationFrame(tpRafId); tpRafId = null; tpFlushMove(); }
-                }
-                tpMode = 'none';
-                tpTouches.clear();
-            } else if (tpMode === 'scroll' && e.touches.length < 2) {
-                // 双指结束：全程无滚动则判定为右键
-                if (!tpScrollMoved) sendTouch('right_tap');
-                tpMode = 'none';
-                tpTouches.clear();
-                tpScrollMoved = false;
-            }
-        }, { passive: false });
-
-        tpSurface.addEventListener('touchcancel', () => {
-            tpSurface.classList.remove('active');
-            if (tpDrag) { sendTouch('drag_end'); tpDrag = false; }
-            tpMode = 'none';
-            tpTouches.clear();
-            if (tpRafId) { cancelAnimationFrame(tpRafId); tpRafId = null; }
-        });
-
-        connect();
-        // 首次访问页面自动聚焦输入框，尽量直接唤起手机输入法
-        window.onload = () => {
-            setTimeout(() => { try { input.focus(); } catch(e) {} }, 100);
-            // iOS 等平台禁止脚本自动弹键盘，改为用户首次触摸页面任意处时聚焦唤起
-            document.addEventListener('touchstart', () => { try { input.focus(); } catch(e) {} }, { once: true });
-        };
-    </script>
-</body>
-</html>
-'''
 
 def get_local_ip():
     """
@@ -1433,11 +429,29 @@ def send_backspaces(count):
             if i < count - 1: time.sleep(0.04)
     finally: typing_in_progress = False
 
+def _resource_path(rel):
+    """返回打包后(sys._MEIPASS)或源码目录下的资源绝对路径"""
+    if hasattr(sys, '_MEIPASS'):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, rel)
+
 async def handle_index(req):
-    # 禁用缓存，避免浏览器缓存旧页面导致更新不生效
-    return web.Response(text=HTML_PAGE, content_type='text/html', headers={'Cache-Control': 'no-store'})
+    """手机页面：唯一事实来源为 www/index.html（源码 / PyInstaller datas 打包同一份）"""
+    try:
+        p = _resource_path(os.path.join('www', 'index.html'))
+        with open(p, 'r', encoding='utf-8') as f:
+            html = f.read()
+        return web.Response(text=html, content_type='text/html', headers={'Cache-Control': 'no-store'})
+    except Exception as e:
+        logger.error('读取 www/index.html 失败: %s', e)
+        return web.Response(
+            text='<meta charset="utf-8"><h3 style="font-family:sans-serif">豆包喵喵资源缺失</h3>'
+                 '<p style="font-family:sans-serif">未找到 www/index.html，请检查安装是否完整。</p>',
+            content_type='text/html', status=500)
 async def handle_websocket(req):
-    global synced_text
+    global synced_text, touchpad_enabled
     ws = web.WebSocketResponse()
     await ws.prepare(req)
     add_client(ws)
@@ -1478,11 +492,14 @@ async def handle_websocket(req):
                     await ws.send_json({'type': 'shortcut_result', 'ok': ok})
                 elif data.get('type') == 'touch':
                     # 手机端触控板：移动 / 点击 / 双击 / 右键 / 滚动
-                    handle_touch(data)
+                    # 尊重桌面 GUI 的“触控板模式”开关：关闭时忽略手机触控指令
+                    if not touchpad_enabled:
+                        logger.info('触控板模式已关闭，忽略手机触控指令')
+                    else:
+                        handle_touch(data)
                 elif data.get('type') == 'touchpad_toggle':
                     # 触控板模式开关
                     new_state = data.get('enabled', True)
-                    global touchpad_enabled
                     touchpad_enabled = new_state
                     status = '开启' if new_state else '关闭'
                     logger.info(f'触控板模式: {status}')
@@ -1513,8 +530,15 @@ def reset_synced_text():
         if main_loop: asyncio.run_coroutine_threadsafe(broadcast_rebase(), main_loop)
 
 def setup_hotkey():
+    """启动（或重建）键盘/鼠标监听。旧监听器先停止，支持运行中更换热键"""
     global main_loop
-    hotkey = CONFIG.get('hotkey', '').strip()
+    for l in list(HOTKEY_LISTENERS):
+        try:
+            l.stop()
+        except Exception:
+            pass
+    HOTKEY_LISTENERS.clear()
+    hotkey = CONFIG.get('hotkey', 'f9').strip().lower()
     IGNORED = {'shift','ctrl','alt','cmd','num_lock','scroll_lock','home','end','page_up','page_down','insert','escape','print_screen','pause','f1','f2','f3','f4','f5','f6','f7','f8','f9','f10','f11','f12'}
     try:
         from pynput import keyboard, mouse
@@ -1540,18 +564,22 @@ def setup_hotkey():
                         reset_synced_text()
             except: pass
 
-        keyboard.Listener(on_press=on_press).start()
-        mouse.Listener(on_click=on_click).start()
-        if hotkey: logger.info(f'🎹 热键: [{hotkey}]')
+        kb = keyboard.Listener(on_press=on_press)
+        ms = mouse.Listener(on_click=on_click)
+        kb.start()
+        ms.start()
+        HOTKEY_LISTENERS.extend([kb, ms])
+        if hotkey: logger.info('🎹 热键: [%s]', hotkey)
         logger.info('🖱️ 鼠标左键监测已启用')
     except Exception as e:
-        logger.warning(f'⚠️  热键需安装 pynput: {e}')
+        logger.warning('⚠️  热键需安装 pynput: %s', e)
 
 async def handle_qr(req):
     try:
         import qrcode
         from io import BytesIO
-        ip = get_local_ip()
+        # 支持 /qr?ip=192.168.x.x 指定二维码指向的 IP（桌面 GUI 选择 IP 后刷新）
+        ip = (req.query.get('ip') or '').strip() or get_local_ip()
         port = CONFIG.get('port', 5000)
         url = f'http://{ip}:{port}'
         qr = qrcode.QRCode(version=1, box_size=10, border=4)
@@ -1579,102 +607,337 @@ async def handle_desktop(req):
     except Exception as e:
         return web.Response(text=f'desktop.html load failed: {e}', status=500)
 
-# ============== 系统托盘 + QR 窗口逻辑 ==============
-def create_qr_image():
-    """生成 QR 码的 PIL Image 对象"""
-    try:
-        import qrcode
-        ip = get_local_ip()
-        port = CONFIG.get('port', 5000)
-        url = f'http://{ip}:{port}'
-        qr = qrcode.QRCode(version=1, box_size=8, border=2)
-        qr.add_data(url)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color='black', back_color='white')
-        return img
-    except Exception as e:
-        logger.error(f'生成二维码失败: {e}')
-        return None
+# ============== 日志回环缓冲（供桌面 GUI 日志面板） ==============
+import collections
+LOG_BUFFER = collections.deque(maxlen=400)
+LOG_BUFFER_LOCK = threading.Lock()
 
-def show_qr_window():
-    """在主线程中显示二维码弹窗"""
-    global qr_window, search_status
-    if qr_window is not None:
+class _RingBufferHandler(logging.Handler):
+    """把 INFO/WARN/ERROR 写入内存环，GUI 通过 API 轮询读取"""
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            lvl = record.levelname
+            if lvl not in ('INFO', 'WARNING', 'ERROR', 'DEBUG'):
+                lvl = 'INFO'
+            tag = {'INFO': 'info', 'WARNING': 'warn', 'ERROR': 'error', 'DEBUG': 'info'}.get(lvl, 'info')
+            with LOG_BUFFER_LOCK:
+                LOG_BUFFER.append({'time': time.strftime('%H:%M:%S'), 'level': tag, 'msg': msg})
+        except Exception:
+            pass
+
+def _install_ring_handler():
+    h = _RingBufferHandler()
+    h.setFormatter(logging.Formatter('%(message)s'))
+    h.setLevel(logging.INFO)
+    logger.addHandler(h)
+    return h
+
+_ring_handler = _install_ring_handler()
+
+# ============== 共享辅助（WebviewAPI 与 HTTP JSON API 共用） ==============
+def read_log_buffer():
+    with LOG_BUFFER_LOCK:
+        return list(LOG_BUFFER)
+
+def clear_log_buffer():
+    with LOG_BUFFER_LOCK:
+        LOG_BUFFER.clear()
+
+def list_ips():
+    ips = []
+    try:
+        import netifaces
+        for iface in netifaces.interfaces():
+            for addr in netifaces.ifaddresses(iface).get(netifaces.AF_INET, []):
+                ip = addr.get('addr', '')
+                if ip and not ip.startswith('127.'):
+                    ips.append(ip)
+    except Exception:
+        try:
+            hostname = socket.gethostname()
+            ips = [ip for ip in socket.gethostbyname_ex(hostname)[2] if not ip.startswith('127.')]
+        except Exception:
+            ips = []
+    if not ips:
+        ips = ['127.0.0.1']
+    return ips
+
+def catdb_config_dir():
+    """配置持久化目录：%APPDATA%/CatDB（Windows），否则仓库目录"""
+    try:
+        if platform.system() == 'Windows':
+            base = os.environ.get('APPDATA') or os.path.expanduser('~')
+            d = os.path.join(base, 'CatDB')
+        else:
+            d = os.path.dirname(os.path.abspath(__file__))
+        os.makedirs(d, exist_ok=True)
+        return d
+    except Exception:
+        return os.path.dirname(os.path.abspath(__file__))
+
+def load_catdb_config():
+    try:
+        with open(os.path.join(catdb_config_dir(), 'config.json'), 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+            return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+def save_catdb_config(cfg):
+    try:
+        path = os.path.join(catdb_config_dir(), 'config.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error('保存配置失败: %s', e)
+        return False
+
+def registry_set_autostart(enable):
+    """Windows 开机自启（HKCU Run）。非 Windows 直接忽略"""
+    if platform.system() != 'Windows':
         return
-    search_status = "qr_showed"
-    
+    import winreg
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
     try:
-        import tkinter as tk
-        from PIL import ImageTk
-        
-        qr_window = tk.Tk()
-        qr_window.title('豆包喵喵 - 扫码连接')
-        qr_window.resizable(False, False)
-        qr_window.attributes('-topmost', True)
-        
-        # 窗口居中
-        w, h = 320, 400
-        sw = qr_window.winfo_screenwidth()
-        sh = qr_window.winfo_screenheight()
-        qr_window.geometry(f'{w}x{h}+{(sw-w)//2}+{(sh-h)//2}')
-        
-        # 标题
-        title = tk.Label(qr_window, text='📱 使用手机扫描二维码连接', font=('微软雅黑', 12, 'bold'))
-        title.pack(pady=(20, 10))
-        
-        # QR 码
-        qr_img = create_qr_image()
-        if qr_img:
-            tk_img = ImageTk.PhotoImage(qr_img)
-            qr_label = tk.Label(qr_window, image=tk_img)
-            qr_label.image = tk_img  # 保持引用
-            qr_label.pack(pady=10)
-        
-        # URL 显示
+        if enable:
+            winreg.SetValueEx(key, "CatDB", 0, winreg.REG_SZ, autostart_command())
+        else:
+            try:
+                winreg.DeleteValue(key, "CatDB")
+            except FileNotFoundError:
+                pass
+    finally:
+        winreg.CloseKey(key)
+
+def autostart_command():
+    """自启动命令行：打包后为 exe --minimized；源码运行为 python server.py --minimized"""
+    if getattr(sys, 'frozen', False):
+        return f'"{sys.executable}" --minimized'
+    py = sys.executable
+    script = os.path.abspath(__file__)
+    return f'"{py}" "{script}" --minimized'
+
+def build_status_payload():
+    """桌面 GUI / 浏览器共用的状态负载"""
+    return {
+        'success': True,
+        'running': service_is_running(),
+        'port': CONFIG.get('port', 5000),
+        'ip': get_local_ip(),
+        'ips': list_ips(),
+        'touchpad_enabled': bool(touchpad_enabled),
+        'hotkey': CONFIG.get('hotkey', 'f9'),
+        'auto_start': bool(load_catdb_config().get('auto_start', False)),
+        'service_name': 'CatDB (_catdb._tcp.local.)',
+        'version': __version__,
+    }
+
+# ============== HTTP JSON API（浏览器模式 / 调试用，pywebview 走 window.pywebview.api） ==============
+CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Cache-Control': 'no-store',
+}
+
+def _json(data, status=200):
+    return web.json_response(data, status=status, headers=CORS_HEADERS)
+
+async def handle_api_status(req):
+    return _json(build_status_payload())
+
+async def handle_api_logs(req):
+    return _json({'success': True, 'logs': read_log_buffer()})
+
+async def handle_api_cors(req):
+    return web.Response(status=204, headers=CORS_HEADERS)
+
+async def handle_api_action(req):
+    """统一动作入口：{action: start|stop|touchpad|autostart|hotkey|clear_logs, ...}"""
+    try:
+        body = await req.json()
+    except Exception:
+        return _json({'success': False, 'error': 'invalid json'}, 400)
+    action = body.get('action')
+    if action == 'start':
+        ok, port = start_service_now()
+        return _json({'success': ok, **build_status_payload()})
+    if action == 'stop':
+        stop_service_now()
+        return _json({'success': True, **build_status_payload()})
+    if action == 'touchpad':
+        global touchpad_enabled
+        touchpad_enabled = bool(body.get('enabled', True))
+        cfg = load_catdb_config(); cfg['touchpad_enabled'] = touchpad_enabled; save_catdb_config(cfg)
+        logger.info('触控板模式: %s', '开启' if touchpad_enabled else '关闭')
+        return _json({'success': True, 'touchpad_enabled': touchpad_enabled})
+    if action == 'autostart':
+        enabled = bool(body.get('enabled', False))
+        cfg = load_catdb_config(); cfg['auto_start'] = enabled; save_catdb_config(cfg)
+        registry_set_autostart(enabled)
+        logger.info('开机自启：%s', '开启' if enabled else '关闭')
+        return _json({'success': True, 'enabled': enabled})
+    if action == 'hotkey':
+        hk = str(body.get('hotkey', '')).strip().lower()
+        if not hk:
+            return _json({'success': False, 'error': 'hotkey empty'}, 400)
+        CONFIG['hotkey'] = hk
+        cfg = load_catdb_config(); cfg['hotkey'] = hk; save_catdb_config(cfg)
+        if service_is_running():
+            setup_hotkey()  # 运行中立即重建监听；未运行时下次启动自动生效
+        logger.info('清屏快捷键已设置为: [%s]', hk)
+        return _json({'success': True, 'hotkey': hk})
+    if action == 'clear_logs':
+        clear_log_buffer()
+        return _json({'success': True})
+    return _json({'success': False, 'error': f'unknown action: {action}'}, 400)
+
+# ============== 服务生命周期（可启动/停止的 aiohttp 服务） ==============
+service_state = {
+    'thread': None,
+    'loop': None,
+    'ready': threading.Event(),
+    'stop_event': None,  # asyncio.Event，由服务线程内的协程创建
+    'runner': None,
+    'running': False,
+}
+
+def service_is_running():
+    return bool(service_state['running'])
+
+def _start_service_inner():
+    """在子线程里运行 asyncio 服务循环；绑定实际端口后置 ready"""
+    async def _serve():
+        global main_loop, zeroconf_instance
+        main_loop = asyncio.get_event_loop()
+        # 端口自动探测
+        desired_port = CONFIG.get('port', 5000)
+        max_attempts = CONFIG.get('max_port_attempts', 20)
+        actual_port = find_available_port(desired_port, max_attempts=max_attempts)
+        if actual_port is None:
+            logger.error('❌ 无法找到可用端口：从 %d 起的 %d 个端口均被占用', desired_port, max_attempts)
+            service_state['running'] = False
+            service_state['ready'].set()
+            return
+        if actual_port != desired_port:
+            logger.warning('原始端口 %d 被占用，已自动切换至可用端口: %d', desired_port, actual_port)
+        CONFIG['port'] = actual_port
+
+        app = web.Application()
+        app.router.add_get('/', handle_index)
+        app.router.add_get('/ws', handle_websocket)
+        app.router.add_get('/qr', handle_qr)
+        app.router.add_get('/desktop.html', handle_desktop)
+        # JSON API（浏览器模式的桌面 GUI 使用；pywebview 模式走 window.pywebview.api）
+        app.router.add_get('/api/status', handle_api_status)
+        app.router.add_get('/api/logs', handle_api_logs)
+        app.router.add_post('/api/action', handle_api_action)
+        app.router.add_options('/api/action', handle_api_cors)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', actual_port)
+        await site.start()
+        service_state['runner'] = runner
+        service_state['running'] = True
+
+        # Zeroconf
+        try:
+            from zeroconf import Zeroconf, ServiceInfo
+            zeroconf_instance = Zeroconf()
+            info = ServiceInfo(
+                '_catdb._tcp.local.',
+                f'CatDB._catdb._tcp.local.',
+                addresses=[socket.inet_aton(get_local_ip())],
+                port=actual_port,
+                properties={'path': '/'},
+            )
+            zeroconf_instance.register_service(info)
+            logger.info('🔍 Zeroconf 服务已注册')
+        except Exception as e:
+            logger.warning('Zeroconf 注册失败（不影响使用）: %s', e)
+
+        setup_hotkey()
+
         ip = get_local_ip()
-        port = CONFIG.get('port', 5000)
-        url_label = tk.Label(qr_window, text=f'http://{ip}:{port}', font=('Consolas', 11), fg='#5D4037')
-        url_label.pack(pady=5)
-        
-        # 提示
-        hint = tk.Label(qr_window, text='或在手机浏览器中输入上方地址', font=('微软雅黑', 10), fg='#8D6E63')
-        hint.pack(pady=(5, 15))
-        
-        # 关闭按钮
-        close_btn = tk.Button(qr_window, text='关闭', font=('微软雅黑', 11), width=12,
-                             command=close_qr_window, bg='#FFB74D', fg='white')
-        close_btn.pack(pady=10)
-        
-        qr_window.protocol('WM_DELETE_WINDOW', close_qr_window)
-        qr_window.mainloop()
-    except ImportError:
-        logger.error('显示二维码窗口需要 tkinter 和 Pillow')
-        search_status = "searching"
-    except Exception as e:
-        logger.error(f'显示二维码窗口失败: {e}')
-        search_status = "searching"
+        logger.info('=' * 50)
+        logger.info('🚀 豆包喵喵服务已启动')
+        logger.info('   本机访问：http://127.0.0.1:%d', actual_port)
+        logger.info('   局域网设备访问：http://%s:%d', ip, actual_port)
+        logger.info('=' * 50)
+        # 停止信号：用 asyncio.Event，绝不阻塞事件循环
+        # （实测：协程里做 threading.Event.wait() 会饿死 Windows Proactor 循环，HTTP 全部超时）
+        stop_ev = asyncio.Event()
+        service_state['stop_event'] = stop_ev
+        service_state['ready'].set()
+        await stop_ev.wait()
 
-def process_qr_queue():
-    """主线程定期检查队列并显示 QR 窗口"""
+        logger.info('正在关闭服务...')
+        service_state['running'] = False
+        if zeroconf_instance:
+            try:
+                zeroconf_instance.unregister_all_services()
+                zeroconf_instance.close()
+            except Exception:
+                pass
+            zeroconf_instance = None
+        try:
+            await runner.cleanup()
+        except Exception:
+            pass
+        # 停止全局热键/鼠标监听（重启服务时会在 setup_hotkey 中重建）
+        for l in list(HOTKEY_LISTENERS):
+            try:
+                l.stop()
+            except Exception:
+                pass
+        HOTKEY_LISTENERS.clear()
+        logger.info('👋 服务已停止')
+
+    service_state['loop'] = asyncio.new_event_loop()
+    asyncio.set_event_loop(service_state['loop'])
+    service_state['loop'].run_until_complete(_serve())
     try:
-        while not qr_window_queue.empty():
-            qr_window_queue.get_nowait()
-            show_qr_window()
-    except queue.Empty:
+        service_state['loop'].close()
+    except Exception:
         pass
-    # 100ms 后再次检查
-    if not shutdown_event.is_set() and main_loop and not main_loop.is_closed():
-        main_loop.call_later(0.1, process_qr_queue)
 
-def close_qr_window():
-    """关闭 QR 窗口"""
-    global qr_window
-    if qr_window:
-        qr_window.destroy()
-        qr_window = None
+def start_service_now():
+    """同步启动服务（若未运行）。返回 (success, port)"""
+    if service_is_running():
+        return True, CONFIG.get('port', 5000)
+    service_state['stop_event'] = None
+    service_state['ready'] = threading.Event()
+    service_state['running'] = False
+    t = threading.Thread(target=_start_service_inner, daemon=True, name='catdb-service')
+    service_state['thread'] = t
+    t.start()
+    service_state['ready'].wait(timeout=15)
+    return service_state['running'], CONFIG.get('port', 5000)
+
+def stop_service_now():
+    """同步停止服务。返回是否已停止"""
+    loop = service_state.get('loop')
+    stop_ev = service_state.get('stop_event')
+    if loop and stop_ev is not None and not loop.is_closed():
+        try:
+            loop.call_soon_threadsafe(stop_ev.set)
+        except Exception:
+            pass
+    t = service_state['thread']
+    # 若在服务线程内部调用（HTTP 动作 / 请求处理器），不能 join 自己，仅发信号
+    cur = threading.current_thread()
+    if t is not None and t is not cur and t.is_alive():
+        t.join(timeout=8)
+    service_state['running'] = False
+    return True
+
+# ============== 系统托盘 ==============
+tray_icon = None
 
 def update_tray_status(status_text, icon_path=None):
-    """更新托盘图标和提示"""
     global tray_icon
     if tray_icon is None:
         return
@@ -1683,359 +946,267 @@ def update_tray_status(status_text, icon_path=None):
             from PIL import Image
             tray_icon.icon = Image.open(icon_path)
         tray_icon.title = f'豆包喵喵 - {status_text}'
-    except:
+    except Exception:
         pass
 
-def on_tray_show_qr(icon, item):
-    """托盘菜单：显示二维码"""
-    # 通过队列请求主线程显示（Tkinter 必须在主线程）
-    qr_window_queue.put('show')
+def on_tray_open(icon, item):
+    try:
+        webbrowser.open(f'http://127.0.0.1:{CONFIG.get("port", 5000)}/desktop.html')
+    except Exception:
+        pass
+
+def on_tray_qr(icon, item):
+    try:
+        webbrowser.open(f'http://127.0.0.1:{CONFIG.get("port", 5000)}/qr')
+    except Exception:
+        pass
 
 def on_tray_show_ip(icon, item):
-    """托盘菜单：显示 IP 地址"""
     ip = get_local_ip()
     port = CONFIG.get('port', 5000)
-    logger.info(f'📱 手机访问: http://{ip}:{port}')
+    logger.info('📱 手机访问: http://%s:%d', ip, port)
+    update_tray_status(f'http://{ip}:{port}')
 
 def on_tray_exit(icon, item):
-    """托盘菜单：退出"""
     logger.info('用户请求退出，正在关闭...')
-    shutdown_event.set()
-    if tray_icon:
-        tray_icon.stop()
-    # 通知主循环退出
+    if service_is_running():
+        stop_service_now()
+    try:
+        icon.stop()
+    except Exception:
+        pass
     if main_loop and not main_loop.is_closed():
-        main_loop.call_soon_threadsafe(main_loop.stop)
+        try:
+            main_loop.call_soon_threadsafe(main_loop.stop)
+        except Exception:
+            pass
+    os._exit(0)
 
 def create_tray_icon():
-    """创建系统托盘图标"""
+    """创建系统托盘图标（菜单项避免 tkinter，二维码直接打开浏览器）"""
     global tray_icon
     try:
         import pystray
-        from PIL import Image, ImageDraw, ImageFont
-        
-        # 创建默认图标（橙色猫咪爪印）
+        from PIL import Image, ImageDraw
         img = Image.new('RGBA', (64, 64), (255, 183, 77, 255))
         draw = ImageDraw.Draw(img)
-        # 画一个简单的猫爪
-        draw.ellipse([16, 24, 48, 56], fill='#5D4037')  # 主掌
-        draw.ellipse([12, 12, 24, 24], fill='#5D4037')  # 左上趾
-        draw.ellipse([24, 8, 36, 20], fill='#5D4037')   # 中上趾
-        draw.ellipse([36, 12, 48, 24], fill='#5D4037')  # 右上趾
-        draw.ellipse([20, 30, 44, 52], fill='#FFE0B2')  # 掌心
-        
+        draw.ellipse([16, 24, 48, 56], fill='#5D4037')
+        draw.ellipse([12, 12, 24, 24], fill='#5D4037')
+        draw.ellipse([24, 8, 36, 20], fill='#5D4037')
+        draw.ellipse([36, 12, 48, 24], fill='#5D4037')
+        draw.ellipse([20, 30, 44, 52], fill='#FFE0B2')
+
         menu = pystray.Menu(
-            pystray.MenuItem('显示二维码', on_tray_show_qr, default=True),
-            pystray.MenuItem('显示 IP 地址', on_tray_show_ip),
+            pystray.MenuItem('🌐 打开面板', on_tray_open, default=True),
+            pystray.MenuItem('📱 显示二维码', on_tray_qr),
+            pystray.MenuItem('📋 显示 IP', on_tray_show_ip),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem('退出', on_tray_exit)
+            pystray.MenuItem('退出', on_tray_exit),
         )
-        
-        tray_icon = pystray.Icon('catdb', img, '豆包喵喵 - 搜索中...', menu)
+        tray_icon = pystray.Icon('catdb', img, '豆包喵喵 - 服务运行中', menu)
         threading.Thread(target=tray_icon.run, daemon=True).start()
         logger.info('🐾 系统托盘已启动')
         return True
     except Exception as e:
-        logger.warning(f'创建系统托盘失败: {e}')
+        logger.warning('创建系统托盘失败（不影响主服务）: %s', e)
         return False
 
-# 搜索超时检查线程
-def search_timeout_check():
-    """启动后 10 秒内如果没有手机连接，则请求主线程显示二维码窗口"""
-    global search_status, search_start_time
-    search_start_time = time.time()
-    
-    while not shutdown_event.is_set():
-        time.sleep(1)
-        elapsed = time.time() - search_start_time
-        
-        # 有手机连接了，不需要弹窗
-        clients, _ = get_clients_snapshot()
-        if len(clients) > 0:
-            if search_status != "connected":
-                search_status = "connected"
-                update_tray_status('已连接')
-                close_qr_window()  # 如果 QR 窗口开着，关闭它
-            continue
-        
-        # 超过 10 秒没有连接，请求主线程弹出二维码
-        if elapsed >= QR_TIMEOUT and search_status == "searching":
-            search_status = "qr_showed"
-            update_tray_status('等待扫码')
-            # 通过队列请求主线程创建 QR 窗口（Tkinter 必须在主线程）
-            qr_window_queue.put('show')
-
-import os
-
-# ============== 主入口 ==============
-async def main():
-    global main_loop, search_start_time, zeroconf_instance
-    main_loop = asyncio.get_event_loop()
-    search_start_time = time.time()
-    
-    # 端口自动探测
-    desired_port = CONFIG.get('port', 5000)
-    max_attempts = CONFIG.get('max_port_attempts', 20)
-    actual_port = find_available_port(desired_port, max_attempts=max_attempts)
-    
-    if actual_port is None:
-        logger.error(f'❌ 无法找到可用端口：从 {desired_port} 起的 {max_attempts} 个端口均被占用')
-        logger.error('请关闭占用端口的程序，或使用 --port 指定其他起始端口')
+# ============== 主入口（--minimized / 托盘静默模式） ==============
+def run_tray_mode():
+    ok, port = start_service_now()
+    if not ok:
+        logger.error('服务启动失败，请检查端口占用后重试')
         return
-    
-    if actual_port != desired_port:
-        logger.warning(f'[INFO] 原始端口{desired_port}被占用，已自动切换至可用端口: {actual_port}')
-    else:
-        logger.info(f'[INFO] 端口 {actual_port} 可用')
-    
-    CONFIG['port'] = actual_port  # 更新全局配置为实际使用的端口
-    
-    app = web.Application()
-    app.router.add_get('/', handle_index)
-    app.router.add_get('/ws', handle_websocket)
-    app.router.add_get('/qr', handle_qr)
-    app.router.add_get('/desktop.html', handle_desktop)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, '0.0.0.0', actual_port).start()
-    
-    # Zeroconf 服务注册（保持引用防止 GC）
-    try:
-        from zeroconf import Zeroconf, ServiceInfo
-        zeroconf_instance = Zeroconf()
-        info = ServiceInfo(
-            '_catdb._tcp.local.',
-            f'CatDB._catdb._tcp.local.',
-            addresses=[socket.inet_aton(get_local_ip())],
-            port=actual_port,
-            properties={'path': '/'},
-        )
-        zeroconf_instance.register_service(info)
-        logger.info('🔍 Zeroconf 服务已注册')
-    except Exception as e:
-        logger.warning(f'Zeroconf 注册失败: {e}')
-    
-    local_ip = get_local_ip()
-    logger.info('='*50)
-    logger.info('🚀 豆包喵喵服务已启动')
-    logger.info(f'   本机访问：http://127.0.0.1:{actual_port}')
-    logger.info(f'   局域网其他设备访问：http://{local_ip}:{actual_port}')
-    logger.info('='*50)
-    logger.info(f'⏳ 等待手机连接... ({QR_TIMEOUT}秒后显示二维码)')
-    
-    # 启动快捷键监听
-    setup_hotkey()
-    
-    # 启动搜索超时检查线程
-    threading.Thread(target=search_timeout_check, daemon=True).start()
-    
-    # 启动系统托盘
     create_tray_icon()
-    
-    # 启动 QR 队列处理器（主线程）
-    main_loop.call_later(0.1, process_qr_queue)
-    
-    # 等待关闭信号
-    await shutdown_event.wait()
-    
-    # 清理资源
-    logger.info('正在关闭服务...')
-    if zeroconf_instance:
-        try:
-            zeroconf_instance.unregister_all_services()
-            zeroconf_instance.close()
-            logger.info('Zeroconf 服务已注销')
-        except Exception as e:
-            logger.warning(f'Zeroconf 清理失败: {e}')
-    close_qr_window()
-    if tray_icon:
-        tray_icon.stop()
-    await runner.cleanup()
-    logger.info('👋 喵喵休息了')
+    # 主线程保持存活（托盘图标由子线程驱动，这里轮询避免退出）
+    try:
+        while service_state['running']:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_service_now()
 
 # ============== 桌面 GUI 集成 ==============
-def _get_catdb_config_path():
-    """开机自启状态持久化：%APPDATA%/CatDB/config.json（非 Windows 回退到仓库目录）"""
-    try:
-        if platform.system() == 'Windows':
-            base = os.environ.get('APPDATA') or os.path.expanduser('~')
-            d = os.path.join(base, 'CatDB')
-        else:
-            d = os.path.dirname(os.path.abspath(__file__))
-        os.makedirs(d, exist_ok=True)
-        return os.path.join(d, 'config.json')
-    except Exception:
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-
 class WebviewAPI:
-    """给 pywebview 暴露的 API（方法名兼容需求书 v3.0）"""
-    
-    def start_service(self):
-        global main_loop
-        if main_loop:
-            asyncio.run_coroutine_threadsafe(start_service_async(), main_loop)
-        return {"success": True}
-    
-    def stop_service(self):
-        global main_loop
-        if main_loop:
-            asyncio.run_coroutine_threadsafe(stop_service_async(), main_loop)
-        return {"success": True}
-    
-    def get_service_status(self):
-        return {"success": True, "running": True}
-    
-    def get_auto_start(self):
-        try:
-            import json
-            with open(_get_catdb_config_path(), 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            return {"success": True, "enabled": config.get('auto_start', False)}
-        except:
-            return {"success": True, "enabled": False}
+    """给 pywebview 暴露的 API（真实控制服务；逻辑与 HTTP JSON API 共用共享辅助）"""
 
-    # 需求书标准命名：get_autostart_status / toggle_autostart（别名，逻辑一致）
+    def start_service(self):
+        ok, port = start_service_now()
+        if ok:
+            logger.info('服务已启动，端口 %d', port)
+        return build_status_payload()
+
+    def stop_service(self):
+        stop_service_now()
+        logger.info('服务已停止')
+        return build_status_payload()
+
+    def get_service_status(self):
+        return build_status_payload()
+
+    def get_auto_start(self):
+        return {"success": True, "enabled": bool(load_catdb_config().get('auto_start', False))}
+
     def get_autostart_status(self):
         return self.get_auto_start()
 
-    def toggle_autostart(self, enabled: bool):
+    def toggle_autostart(self, enabled):
         return self.set_auto_start(enabled)
-    
+
     def set_auto_start(self, enabled):
         try:
-            import json
-            cfg_path = _get_catdb_config_path()
-            config = {}
-            try:
-                with open(cfg_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-            except:
-                pass
-            config['auto_start'] = enabled
-            with open(cfg_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f)
-            if platform.system() == 'Windows' and enabled:
-                self._add_to_startup()
-            elif platform.system() == 'Windows' and not enabled:
-                self._remove_from_startup()
-            return {"success": True}
+            cfg = load_catdb_config()
+            cfg['auto_start'] = bool(enabled)
+            save_catdb_config(cfg)
+            registry_set_autostart(bool(enabled))
+            logger.info('开机自启：%s', '开启' if enabled else '关闭')
+            return {"success": True, "enabled": bool(enabled)}
         except Exception as e:
+            logger.error('设置开机自启失败: %s', e)
             return {"success": False, "error": str(e)}
-    
-    def _add_to_startup(self):
-        if platform.system() == 'Windows':
-            import winreg
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, "CatDB", 0, winreg.REG_SZ, f'"{sys.executable}" --minimized')
-            winreg.CloseKey(key)
-        
-    def _remove_from_startup(self):
-        if platform.system() == 'Windows':
-            try:
-                import winreg
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
-                winreg.DeleteValue(key, "CatDB")
-                winreg.CloseKey(key)
-            except:
-                pass
-    
+
     def get_ip_list(self):
-        ips = []
-        try:
-            import netifaces
-            for iface in netifaces.interfaces():
-                addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
-                for addr in addrs:
-                    ip = addr.get('addr', '')
-                    if ip and not ip.startswith('127.'):
-                        ips.append(ip)
-        except:
-            try:
-                hostname = socket.gethostname()
-                ips = socket.gethostbyname_ex(hostname)[2]
-                ips = [ip for ip in ips if not ip.startswith('127.')]
-            except:
-                ips = ['127.0.0.1']
-        return {"success": True, "ips": ips}
-    
+        return {"success": True, "ips": list_ips()}
+
     def get_port(self):
         return {"success": True, "port": CONFIG.get('port', 5000)}
-    
-    def toggle_touchpad(self, enabled: bool):
-        # 直接对接上游已有后端开关：全局变量 touchpad_enabled（不重写业务逻辑）
+
+    def get_hotkey(self):
+        return {"success": True, "hotkey": CONFIG.get('hotkey', 'f9')}
+
+    def set_hotkey(self, hotkey):
+        hk = str(hotkey or '').strip().lower()
+        if not hk:
+            return {"success": False, "error": "快捷键不能为空"}
+        CONFIG['hotkey'] = hk
+        cfg = load_catdb_config()
+        cfg['hotkey'] = hk
+        save_catdb_config(cfg)
+        if service_is_running():
+            setup_hotkey()  # 运行中立即重建监听；未运行时下次启动自动生效
+        logger.info('清屏快捷键已设置为: [%s]', hk)
+        return {"success": True, "hotkey": hk}
+
+    def toggle_touchpad(self, enabled):
         global touchpad_enabled
         touchpad_enabled = bool(enabled)
-        logger.info(f'触控板模式: {"开启" if touchpad_enabled else "关闭"}')
+        cfg = load_catdb_config()
+        cfg['touchpad_enabled'] = touchpad_enabled
+        save_catdb_config(cfg)
+        logger.info('触控板模式: %s', '开启' if touchpad_enabled else '关闭')
         return {"success": True, "touchpad_enabled": touchpad_enabled}
-    
+
     def copy_to_clipboard(self, text):
         try:
-            pyperclip.copy(text)
+            pyperclip.copy(str(text))
+            return {"success": True}
+        except Exception as e:
+            logger.error('复制失败: %s', e)
+            return {"success": False, "error": str(e)}
+
+    def refresh_qr(self):
+        return {"success": True}
+
+    def open_shortcut_settings(self):
+        return {"success": True}
+
+    def get_recent_logs(self):
+        return {"success": True, "logs": read_log_buffer()}
+
+    def clear_logs(self):
+        clear_log_buffer()
+        return {"success": True}
+
+    def minimize_window(self):
+        try:
+            for w in (webview.windows or []):
+                w.minimize()
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
-    
-    def refresh_qr(self):
-        return {"success": True}
-    
-    def open_shortcut_settings(self):
-        return {"success": True}
-    
-    def get_recent_logs(self):
-        return {"success": True, "logs": []}
-    
-    def minimize_window(self):
-        return {"success": True}
-    
+
+    def exit_app(self):
+        """退出：先停服务再关窗口（窗口关闭回调也会兜底停服务）"""
+        try:
+            if service_is_running():
+                stop_service_now()
+            for w in (webview.windows or []):
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def hide_window(self):
         return {"success": True}
 
-# API 实例
+# API 实例（在 GUI 模式使用）
 webview_api = WebviewAPI()
 
-# 异步启动/停止服务
-async def start_service_async():
-    return True
+# ============== GUI / 托盘双模式启动入口 ==============
+def run_gui_mode():
+    """桌面 GUI 模式：先启动后端服务，再打开本地加载的 desktop.html 窗口。
+    页面由本地文件提供（不依赖 127.0.0.1 的 HTTP），彻底规避端口猜测/竞态导致的 404。"""
+    global main_loop
+    if webview is None:
+        logger.error('缺少 pywebview，无法启动桌面界面。请执行: pip install pywebview')
+        return
 
-async def stop_service_async():
-    shutdown_event.set()
-    return True
+    ok, port = start_service_now()
+    if not ok:
+        logger.warning('后端服务未能自动启动，界面将以“未运行”状态打开（可手动点击启动）')
 
-# ============== 修改主入口 ==============
-if __name__ == '__main__':
-    import sys
-    
-    # 检查是否以最小化模式启动（开机自启）
-    minimized = '--minimized' in sys.argv
-    
+    # pywebview 加载本地文件：file:// URL，路径含空格/中文也安全
     try:
-        parse_args()
-        
-        # 如果是最小化启动，只运行后台服务
-        if minimized:
-            asyncio.run(main())
-        else:
-            # 正常启动：启动桌面 GUI（需求书 Phase 2.5：920x660，可拖拽缩放，最小 800x600）
-            _gui_port = CONFIG.get('port', 5000)
-            _gui_url = f"http://127.0.0.1:{_gui_port}/desktop.html"
-            webview.create_window(
-                "豆包喵喵",
-                _gui_url,
-                width=920,
-                height=660,
-                min_size=(800, 600),
-                resizable=True,
-                js_api=webview_api
-            )
-            
-            # 启动后台服务线程
-            def run_backend():
-                asyncio.run(main())
-            
-            backend_thread = threading.Thread(target=run_backend, daemon=True)
-            backend_thread.start()
-            
-            # 启动 GUI（阻塞）
-            webview.start(debug=False)
+        import pathlib
+        desktop = pathlib.Path(_resource_path(os.path.join('www', 'desktop.html')))
+        url = desktop.as_uri()
+    except Exception:
+        url = f'http://127.0.0.1:{CONFIG.get("port", 5000)}/desktop.html'
+
+    try:
+        webview.create_window(
+            "豆包喵喵",
+            url,
+            width=920,
+            height=660,
+            min_size=(800, 600),
+            resizable=True,
+            js_api=webview_api,
+        )
+    except Exception as e:
+        logger.error('创建窗口失败: %s', e)
+        stop_service_now()
+        return
+
+    webview.start(debug=False)
+    # 窗口关闭后停止后端，避免残留进程占端口
+    if service_is_running():
+        stop_service_now()
+    logger.info('👋 喵喵休息了')
+
+def main():
+    parse_args()
+    load_persisted_prefs()
+    minimized = CONFIG.get('minimized', False)
+    if minimized:
+        run_tray_mode()
+    else:
+        run_gui_mode()
+
+if __name__ == '__main__':
+    try:
+        main()
     except KeyboardInterrupt:
         logger.info('👋 喵喵休息了')
+        try:
+            stop_service_now()
+        except Exception:
+            pass
+        sys.exit(0)
+    except Exception as e:
+        logger.error('启动失败: %s', e)
+        sys.exit(1)

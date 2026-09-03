@@ -3,194 +3,615 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>豆包喵喵 v2.2.0</title>
+<title>豆包喵喵 · 控制台</title>
 <style>
-:root{
-  --bg-color:#F9F5F0; --card-bg:#FFFFFF; --text-main:#333333; --text-light:#666666;
-  --accent-orange:#FFB74D; --accent-red:#FF5252; --panel-bg:#F0EDE2; --border-color:#E0D8D0;
-}
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-html,body{width:100vw;height:100vh;overflow:hidden;}
-body{font-family:'Microsoft YaHei','SimHei',sans-serif;background:var(--bg-color);color:var(--text-main);display:flex;flex-direction:column;height:100vh;width:100vw;overflow:hidden;}
-/* 顶部状态栏 */
-.status-bar{height:32px;background:var(--card-bg);border-bottom:1px solid var(--border-color);display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--text-light);flex-shrink:0;}
-.status-dot{width:10px;height:10px;border-radius:50%;margin-right:8px;background:#FF5252;flex-shrink:0;}
-.status-dot.on{background:#4CAF50;}
-.status-text{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.status-meta{white-space:nowrap;}
-.gear-wrap{position:relative;margin-left:8px;}
-.gear-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:2px 6px;border-radius:6px;}
-.gear-btn:hover{background:#F0EDE2;}
-.gear-menu{position:absolute;right:0;top:28px;background:#fff;border:1px solid var(--border-color);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:10px 12px;min-width:220px;display:none;z-index:1000;}
-.gear-menu.open{display:block;}
-.gear-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;padding:6px 0;}
-.toggle{width:42px;height:22px;border-radius:11px;background:#CCC;border:none;cursor:pointer;position:relative;flex-shrink:0;}
-.toggle::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .15s;}
-.toggle.on{background:var(--accent-orange);}
-.toggle.on::after{left:22px;}
-/* 主体三栏：流式布局 */
-.layout{display:flex;flex:1;min-height:0;width:100%;gap:18px;padding:12px 14px;}
-.left-panel{flex:0 0 25%;min-width:0;background:var(--panel-bg);border:1px solid var(--border-color);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;}
-.center-panel{flex:1;min-width:0;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:12px;overflow:auto;display:flex;flex-direction:column;align-items:center;}
-.right-panel{flex:0 0 30%;min-width:0;background:var(--panel-bg);border:1px solid var(--border-color);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;}
-.panel-title{padding:10px 12px;font-size:13px;font-weight:bold;border-bottom:1px solid var(--border-color);}
-.control-panel{flex:1;padding:12px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
-.capsule-btn{width:100%;background:var(--card-bg);border:2px solid var(--border-color);color:var(--text-main);min-height:38px;border-radius:19px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;cursor:pointer;}
-.capsule-btn.active{background:var(--accent-orange);color:#fff;border-color:#FFA726;}
-.touchpad-row{display:flex;align-items:center;justify-content:space-between;background:var(--card-bg);border:2px solid var(--border-color);border-radius:12px;padding:8px 10px;font-size:13px;}
-.quick-settings{margin-top:auto;padding-top:8px;border-top:1px dashed var(--border-color);}
-.quick-setbtn{width:100%;background:none;border:none;color:var(--text-light);min-height:30px;font-size:13px;cursor:pointer;text-align:left;padding:6px 8px;border-radius:6px;}
-.quick-setbtn:hover{background:#E8E0D8;}
-.qr-section{background:#fff;border:1px solid var(--border-color);border-radius:8px;padding:12px;margin-bottom:12px;width:100%;max-width:340px;text-align:center;}
-.qr-section h4{font-size:12px;color:var(--text-light);margin-bottom:8px;}
-.qr-image{width:100%;max-width:280px;max-height:280px;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:4px;display:block;margin:0 auto;}
-.ws-address{background:#F0F0F0;border-radius:6px;padding:8px;margin:0 0 8px 0;font-family:Consolas,monospace;font-size:12px;word-break:break-all;width:100%;max-width:340px;text-align:center;}
-.copy-btn{width:100%;max-width:340px;background:var(--accent-orange);color:#fff;border:none;padding:8px;border-radius:6px;font-size:13px;cursor:pointer;}
-.copy-btn:hover{background:#FFA726;}
-.placeholder{text-align:center;color:var(--text-light);padding:20px;font-style:italic;}
-.right-section{padding:10px 12px;border-bottom:1px solid var(--border-color);}
-.right-section:last-child{border-bottom:none;flex:1;overflow:auto;}
-.section-title{font-size:12px;color:var(--text-light);margin-bottom:8px;padding-bottom:4px;border-bottom:1px dashed var(--border-color);}
-.ip-item{padding:6px 8px;font-size:13px;cursor:pointer;border-radius:6px;}
-.ip-item:hover{background:#E8E0D8;}
-.ip-item.active{color:#E65100;font-weight:bold;background:#FFF3E0;}
-/* 底部日志：固定130px，允许垂直拖拽 */
-.log-panel{flex-shrink:0;height:130px;min-height:80px;max-height:40vh;resize:vertical;overflow:auto;background:#2D2D2D;border-top:1px solid var(--border-color);color:#E0E0E0;font-family:Consolas,Menlo,monospace;font-size:11px;display:flex;flex-direction:column;}
-.log-header{height:24px;background:#3D3D3D;padding:0 8px;display:flex;align-items:center;font-size:11px;color:#B0B0B0;flex-shrink:0;}
-.log-header span{flex:1;}
-.btn-clear{background:none;border:none;color:#888;cursor:pointer;font-size:11px;}
-.btn-clear:hover{color:#FF5555;}
-.log-content{flex:1;padding:8px;overflow-y:auto;white-space:pre-wrap;line-height:1.5;}
-.log-content .info{color:#B0B0B0;}
-.log-content .warn{color:#FFAA00;}
-.log-content .error{color:#FF5555;}
-.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:2000;}
-.modal-overlay.open{display:flex;}
-.modal{background:#fff;border-radius:14px;padding:20px;width:320px;max-width:90vw;max-height:88vh;overflow:auto;}
-.modal h3{text-align:center;margin-bottom:14px;}
-.modal-btn{width:100%;padding:10px;background:var(--accent-orange);color:#fff;border:none;border-radius:8px;font-size:14px;margin-top:10px;cursor:pointer;}
-.toast{position:fixed;bottom:150px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:8px 16px;border-radius:6px;font-size:13px;z-index:3000;}
+    :root {
+        --bg: #F7F1E8;
+        --card: #FFFDF9;
+        --ink: #4E342E;
+        --ink-2: #8D6E63;
+        --line: #EADFD3;
+        --orange: #FFB74D;
+        --orange-dk: #EF6C00;
+        --green: #43A047;
+        --red: #E53935;
+        --dark: #1E1B1A;
+        --shadow: 0 6px 18px rgba(93,64,55,.10);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+        font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        user-select: none;
+    }
+    button { font-family: inherit; cursor: pointer; }
+
+    /* ===== 顶部状态栏 ===== */
+    .topbar {
+        flex: 0 0 auto;
+        height: 52px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 16px;
+        background: var(--card);
+        border-bottom: 1px solid var(--line);
+        box-shadow: var(--shadow);
+        z-index: 20;
+    }
+    .brand { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; }
+    .brand .cat { font-size: 20px; }
+    .ver {
+        font-size: 11px; color: #fff; background: var(--orange-dk);
+        border-radius: 10px; padding: 1px 8px; font-weight: 600; vertical-align: 2px;
+    }
+    .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+    .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(67,160,71,.18); }
+    .dot.off { background: var(--red); box-shadow: 0 0 0 3px rgba(229,57,53,.15); }
+    .state-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink); }
+    .meta { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); }
+    .meta b { color: var(--ink); font-weight: 600; }
+    .spacer { flex: 1; }
+
+    /* 齿轮 */
+    .gear-wrap { position: relative; }
+    .icon-btn {
+        width: 34px; height: 34px; border-radius: 10px;
+        border: 1px solid var(--line); background: #fff;
+        font-size: 16px; display: inline-flex; align-items: center; justify-content: center;
+        transition: background .12s;
+    }
+    .icon-btn:hover { background: #FDF3E7; }
+    .menu {
+        position: absolute; right: 0; top: 42px;
+        background: var(--card); border: 1px solid var(--line);
+        border-radius: 12px; box-shadow: var(--shadow);
+        width: 216px; padding: 8px; z-index: 60;
+    }
+    .menu.hidden { display: none; }
+    .menu-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px; font-size: 13px; }
+    .menu-row:hover { background: #FBF4EA; }
+    .menu .sep { border-top: 1px solid var(--line); margin: 6px 4px; }
+    .menu .danger { color: var(--red); }
+    .menu button.menu-btn {
+        border: none; background: transparent; width: 100%; text-align: left;
+        font-size: 13px; color: var(--ink); padding: 8px 10px; border-radius: 8px;
+    }
+    .menu button.menu-btn:hover { background: #FBF4EA; }
+    .menu button.menu-btn.danger:hover { background: #FDECEA; color: var(--red); }
+
+    /* switch */
+    .switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .sl {
+        position: absolute; inset: 0; border-radius: 22px;
+        background: #D7CCC8; transition: .18s;
+    }
+    .switch .sl:before {
+        content: ""; position: absolute; width: 16px; height: 16px;
+        left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .18s;
+        box-shadow: 0 1px 3px rgba(0,0,0,.25);
+    }
+    .switch input:checked + .sl { background: var(--orange-dk); }
+    .switch input:checked + .sl:before { transform: translateX(18px); }
+
+    /* ===== 主区三栏 ===== */
+    .cols {
+        flex: 1 1 auto; min-height: 0;
+        display: flex; gap: 18px;
+        padding: 16px 18px;
+    }
+    .col {
+        background: var(--card); border: 1px solid var(--line);
+        border-radius: 16px; box-shadow: var(--shadow);
+        display: flex; flex-direction: column; min-height: 0;
+    }
+    .col.left  { flex: 0 0 25%; padding: 16px; gap: 14px; overflow-y: auto; }
+    .col.mid   { flex: 1 1 auto; padding: 18px; align-items: center; justify-content: center; overflow-y: auto; }
+    .col.right { flex: 0 0 30%; padding: 16px; gap: 14px; overflow-y: auto; }
+
+    .card-title { font-size: 13px; color: var(--ink-2); font-weight: 600; letter-spacing: .5px; display:flex; align-items:center; gap:6px; }
+    .card-title::before { content:""; width: 4px; height: 13px; border-radius: 2px; background: var(--orange); }
+
+    /* 左栏 */
+    .pill-btn {
+        width: 100%; border: none; border-radius: 999px;
+        padding: 13px 0; font-size: 16px; font-weight: 700; color: #fff;
+        background: linear-gradient(135deg, #66BB6A, #43A047);
+        box-shadow: 0 4px 0 #2E7D32; transition: .12s;
+    }
+    .pill-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #2E7D32; }
+    .pill-btn.stop { background: linear-gradient(135deg, #EF5350, #E53935); box-shadow: 0 4px 0 #B71C1C; }
+    .pill-btn.stop:active { box-shadow: 0 1px 0 #B71C1C; }
+    .row-opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+    .hint { font-size: 12px; color: var(--ink-2); line-height: 1.55; }
+    .mini-hint { font-size: 11px; color: #BCAAA4; }
+    .sep-line { border: none; border-top: 1px dashed var(--line); }
+    .entry-btn {
+        border: 1px solid var(--line); background: #fff; border-radius: 10px;
+        width: 100%; padding: 9px 12px; text-align: left; font-size: 13px; color: var(--ink);
+        display: flex; align-items: center; gap: 8px; transition: background .12s;
+    }
+    .entry-btn:hover { background: #FDF3E7; }
+
+    /* 中栏（扫码区） */
+    .qr-card { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; max-width: 460px; }
+    .qr-frame {
+        width: 290px; height: 290px; max-width: 100%; max-height: 100%;
+        border-radius: 18px; border: 3px solid var(--line);
+        background: #fff; display: flex; align-items: center; justify-content: center;
+        position: relative; overflow: hidden;
+    }
+    .qr-frame img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+    .qr-frame.placeholder { background: #FBF5EC; }
+    .qr-ph { text-align: center; color: #BCAAA4; font-size: 13px; line-height: 1.8; }
+    .qr-ph .big { font-size: 40px; display: block; margin-bottom: 6px; }
+    .qr-tip { font-size: 12px; color: var(--ink-2); }
+    .addr-box {
+        background: #F6EFE4; border: 1px solid var(--line); border-radius: 12px;
+        padding: 10px 14px; width: 100%;
+    }
+    .addr-line { display: flex; align-items: center; gap: 10px; font-size: 15px; font-family: Consolas, monospace; font-weight: 600; }
+    .addr-line .lbl { font-size: 11px; color: var(--ink-2); font-family: inherit; font-weight: 400; }
+    .addr-sub { margin-top: 6px; font-size: 12px; color: var(--ink-2); font-family: Consolas, monospace; }
+    .copy-btn {
+        margin-left: auto; flex-shrink: 0; border: none; border-radius: 8px;
+        background: var(--orange); color: #fff; font-size: 12px; padding: 5px 12px;
+        box-shadow: 0 2px 0 var(--orange-dk); transition: .1s;
+    }
+    .copy-btn:active { transform: translateY(2px); box-shadow: none; }
+
+    /* 右栏 */
+    .svc-name {
+        background: #FFF4E3; border: 1px dashed var(--orange); border-radius: 10px;
+        padding: 9px 12px; font-size: 12px; color: var(--ink); font-family: Consolas, monospace;
+    }
+    .ip-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ip-tag {
+        border: 1.5px solid var(--line); background: #fff; border-radius: 999px;
+        padding: 5px 12px; font-size: 12.5px; font-family: Consolas, monospace;
+        transition: .12s;
+    }
+    .ip-tag:hover { border-color: var(--orange); }
+    .ip-tag.active { border-color: var(--orange-dk); background: #FFECCC; color: var(--orange-dk); font-weight: 700; }
+    .fw-note { font-size: 11px; color: var(--ink-2); line-height: 1.6; }
+
+    /* ===== 日志面板 ===== */
+    .logbar {
+        flex: 0 0 auto; display: flex; flex-direction: column;
+        margin: 0 18px 16px; background: var(--dark); border-radius: 14px;
+        box-shadow: var(--shadow); overflow: hidden;
+        resize: vertical; min-height: 96px; max-height: 260px; height: 148px;
+    }
+    .loghead {
+        flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+        padding: 6px 12px; background: #2A2522;
+    }
+    .loghead .lt { font-size: 12px; color: #CFC6BF; display: flex; align-items: center; gap: 6px; }
+    .loghead .lt::before { content: "▸"; color: var(--orange); }
+    .loghead .sp { flex: 1; }
+    .clear-btn {
+        border: none; background: transparent; color: #9E948C; font-size: 12px;
+        padding: 3px 8px; border-radius: 6px;
+    }
+    .clear-btn:hover { background: #3A3330; color: #fff; }
+    .logs {
+        flex: 1 1 auto; overflow-y: auto; padding: 6px 12px 10px;
+        font-family: Consolas, "Courier New", monospace; font-size: 12px;
+        line-height: 1.6; white-space: pre-wrap; word-break: break-all;
+    }
+    .logs .line { color: #BDB4AC; }
+    .logs .line .t { color: #6E655D; margin-right: 8px; }
+    .logs .line.info .l { color: #79C9FF; margin-right: 8px; }
+    .logs .line.warn { color: #FFD54F; }
+    .logs .line.warn .l { color: #FFD54F; margin-right: 8px; }
+    .logs .line.error { color: #FF8A80; }
+    .logs .line.error .l { color: #FF8A80; margin-right: 8px; }
+    .logs::-webkit-scrollbar { width: 8px; }
+    .logs::-webkit-scrollbar-thumb { background: #4A423D; border-radius: 4px; }
+    .logs::-webkit-scrollbar-track { background: transparent; }
+
+    /* ===== 弹窗 ===== */
+    .overlay {
+        position: fixed; inset: 0; background: rgba(62,45,38,.4);
+        display: flex; align-items: center; justify-content: center; z-index: 100;
+    }
+    .overlay.hidden { display: none; }
+    .modal {
+        background: var(--card); border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.25);
+        width: 420px; max-width: 92vw; padding: 20px;
+    }
+    .modal h3 { font-size: 16px; margin-bottom: 14px; text-align: center; }
+    .m-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 13.5px; }
+    .m-row select, .m-row input[type=text] {
+        flex: 1; padding: 7px 10px; border: 1.5px solid var(--line); border-radius: 8px;
+        font-family: inherit; font-size: 13.5px; color: var(--ink); background: #fff;
+    }
+    .m-actions { display: flex; justify-content: center; gap: 12px; margin-top: 16px; }
+    .m-btn {
+        border: none; border-radius: 999px; padding: 9px 26px; font-size: 14px; font-weight: 600;
+    }
+    .m-btn.pri { background: var(--orange); color: #fff; box-shadow: 0 3px 0 var(--orange-dk); }
+    .m-btn.sec { background: #EDE4D8; color: var(--ink); box-shadow: 0 3px 0 #CFC2B2; }
+    .m-btn:active { transform: translateY(2px); box-shadow: none; }
+
+    /* toast */
+    #toast {
+        position: fixed; left: 50%; bottom: 170px; transform: translateX(-50%) translateY(20px);
+        background: #3B2E2A; color: #fff; font-size: 13px; padding: 8px 18px; border-radius: 999px;
+        opacity: 0; pointer-events: none; transition: .25s; z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,.3);
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    @media (max-width: 900px) {
+        .col.left { flex: 0 0 30%; }
+        .col.right { display: none; }
+    }
 </style>
 </head>
 <body>
-<div class="status-bar">
-  <div class="status-dot" id="statusDot"></div>
-  <div class="status-text" id="statusText">服务未启动</div>
-  <div class="status-meta" id="statusMeta">IP -- · 端口 --</div>
-  <div class="gear-wrap">
-    <button class="gear-btn" id="gearBtn" title="设置">⚙️</button>
-    <div class="gear-menu" id="gearMenu">
-      <div class="gear-row"><span>开机自启（Windows）</span><button class="toggle" id="autostartToggle"></button></div>
-      <div class="gear-row"><span>快捷键设置</span><button class="copy-btn" style="max-width:90px" id="hkBtn2">打开</button></div>
+
+<!-- ===== 顶部状态栏 ===== -->
+<header class="topbar">
+    <div class="brand"><span class="cat">🐱</span>豆包喵喵<span class="ver" id="verTag">v2.2.0</span></div>
+    <div class="state-chip"><span class="dot off" id="dot"></span><span id="stateText">检测中…</span></div>
+    <div class="meta">
+        <span>IP <b id="topIp">--</b></span>
+        <span>端口 <b id="topPort">--</b></span>
     </div>
-  </div>
-</div>
-<div class="layout">
-  <div class="left-panel">
-    <div class="panel-title">控制面板</div>
-    <div class="control-panel">
-      <button class="capsule-btn" id="btnStartStop">▶ 启动服务</button>
-      <div class="touchpad-row"><span>🖐️ 触控板模式</span><button class="toggle" id="touchpadToggle"></button></div>
-      <div class="quick-settings"><button class="quick-setbtn" id="hkBtn">⌨️ 快捷键设置…</button></div>
+    <div class="spacer"></div>
+    <div class="gear-wrap">
+        <button class="icon-btn" id="gearBtn" title="更多设置">⚙️</button>
+        <div class="menu hidden" id="gearMenu">
+            <div class="menu-row">
+                <span>开机自启 <span class="mini-hint" id="autostartHint">(Windows)</span></span>
+                <label class="switch"><input type="checkbox" id="autostartChk"><span class="sl"></span></label>
+            </div>
+            <div class="sep"></div>
+            <button class="menu-btn" id="minimizeBtn">🗕 最小化到托盘</button>
+            <button class="menu-btn danger" id="quitBtn">✕ 退出豆包喵喵</button>
+        </div>
     </div>
-  </div>
-  <div class="center-panel">
-    <div class="qr-section">
-      <h4>扫码连接（/qr 自动刷新）</h4>
-      <img id="qrImage" class="qr-image" alt="二维码" style="display:none">
-      <div class="placeholder" id="qrPlaceholder">服务未启动时显示占位提示：请先点击左侧“启动服务”</div>
+</header>
+
+<!-- ===== 三栏主区 ===== -->
+<main class="cols">
+    <!-- 左栏：控制面板 -->
+    <section class="col left">
+        <div class="card-title">控制</div>
+        <button class="pill-btn" id="powerBtn">▶ 启动服务</button>
+        <div class="row-opt">
+            <span>触控板模式</span>
+            <label class="switch"><input type="checkbox" id="tpChk"><span class="sl"></span></label>
+        </div>
+        <p class="hint" id="tpStateHint">开启后，手机可当无线触控板操控电脑</p>
+        <hr class="sep-line">
+        <button class="entry-btn" id="hkEntry">⌨️ 快捷键设置 <span class="spacer" style="text-align:right;color:#BCAAA4;" id="hkCurrent">f9</span></button>
+        <hr class="sep-line">
+        <div>
+            <div class="card-title" style="margin-bottom:8px;">小贴士</div>
+            <p class="hint">1️⃣ 点击「启动服务」，然后让手机扫右侧二维码<br>
+            2️⃣ 手机与电脑须在同一 Wi-Fi<br>
+            3️⃣ 电脑介入（打字/点击）后手机会自动「翻篇」继续输入</p>
+        </div>
+    </section>
+
+    <!-- 中栏：扫码区 -->
+    <section class="col mid">
+        <div class="qr-card">
+            <div class="qr-frame placeholder" id="qrFrame">
+                <div class="qr-ph" id="qrPh">
+                    <span class="big">📱</span>
+                    启动服务后显示二维码<br><span class="mini-hint">手机扫码即可连接输入</span>
+                </div>
+                <img id="qrImg" alt="二维码" style="display:none;">
+            </div>
+            <div class="addr-box" id="addrBox" style="display:none;">
+                <div class="addr-line">
+                    <span class="lbl">手机地址</span>
+                    <span id="httpAddr">--</span>
+                    <button class="copy-btn" id="copyHttp">复制</button>
+                </div>
+                <div class="addr-sub" id="wsAddr">ws://--/ws</div>
+            </div>
+            <div class="qr-tip" id="qrTip">二维码每 5 秒自动刷新 · 也可用右侧 IP 手动指定</div>
+        </div>
+    </section>
+
+    <!-- 右栏：辅助面板 -->
+    <section class="col right">
+        <div>
+            <div class="card-title" style="margin-bottom:8px;">服务发现</div>
+            <div class="svc-name">CatDB · _catdb._tcp.local.</div>
+        </div>
+        <div>
+            <div class="card-title" style="margin-bottom:8px;">本机地址 <span class="mini-hint">点击切换</span></div>
+            <div class="ip-tags" id="ipTags"></div>
+        </div>
+        <div>
+            <div class="card-title" style="margin-bottom:8px;">连接说明</div>
+            <p class="fw-note">• 手机浏览器直接访问上方地址即可<br>
+            • 安卓 App 在设置里填入 电脑IP:端口<br>
+            • 若无法连接，请放行 Windows 防火墙中的端口</p>
+        </div>
+        <div class="spacer"></div>
+        <p class="fw-note" style="text-align:right;">❤ 豆包喵喵 已守护</p>
+    </section>
+</main>
+
+<!-- ===== 日志面板 ===== -->
+<footer class="logbar">
+    <div class="loghead">
+        <span class="lt">运行日志</span>
+        <span class="sp"></span>
+        <button class="clear-btn" id="clearLogsBtn">清空</button>
     </div>
-    <div class="ws-address" id="wsAddress">ws://--:--</div>
-    <button class="copy-btn" id="copyBtn">复制地址</button>
-  </div>
-  <div class="right-panel">
-    <div class="right-section"><div class="section-title">Zeroconf 服务名</div><div id="zcName" style="font-size:13px">CatDB._catdb._tcp.local.</div></div>
-    <div class="right-section"><div class="section-title">可用 IP（点击切换）</div><div id="ipList">正在获取…</div></div>
-  </div>
+    <div class="logs" id="logs"></div>
+</footer>
+
+<!-- ===== 快捷键设置弹窗 ===== -->
+<div class="overlay hidden" id="hkModal">
+    <div class="modal">
+        <h3>⌨️ 快捷键设置</h3>
+        <div class="m-row">
+            <span style="flex:0 0 auto;">清屏热键</span>
+            <select id="hkSelect"></select>
+        </div>
+        <p class="hint" style="font-size:12px; color:var(--ink-2); line-height:1.6;">
+            在电脑任意窗口按下该键，会触发手机端「清空并切走」<br>
+            电脑打字/点击时的「翻篇续写」检测不受影响。
+        </p>
+        <div class="m-actions">
+            <button class="m-btn pri" id="hkSave">保存</button>
+            <button class="m-btn sec" id="hkCancel">取消</button>
+        </div>
+    </div>
 </div>
-<div class="log-panel">
-  <div class="log-header"><span>日志 INFO/WARN/ERROR</span><button class="btn-clear" id="btnClear">清空</button></div>
-  <div class="log-content" id="logContent"><div class="info">— 等待服务启动 —</div></div>
-</div>
-<div class="modal-overlay" id="hkModal"><div class="modal"><h3>⌨️ 快捷键设置</h3><p style="font-size:13px;color:#666">手机端自定义快捷键（切换窗口/复制/粘贴等）在手机页面设置，本窗口仅为入口占位。</p><button class="modal-btn" id="hkClose">关闭</button></div></div>
+
+<div id="toast"></div>
+
 <script>
-let serviceRunning=false, touchpadOn=false, curIP=null, curPort=null, qrTimer=null;
-const $=id=>document.getElementById(id);
-const api=()=> (window.pywebview&&window.pywebview.api)?window.pywebview.api:null;
-function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2000);}
-function log(m,cls='info'){const c=$('logContent');const d=document.createElement('div');d.className=cls;const ts=new Date().toLocaleTimeString();d.textContent=`[${ts}] ${m}`;c.appendChild(d);c.scrollTop=c.scrollHeight;while(c.children.length>200)c.removeChild(c.firstChild);}
-$('btnClear').onclick=()=>{$('logContent').innerHTML='';};
-$('gearBtn').onclick=e=>{e.stopPropagation();$('gearMenu').classList.toggle('open');};
-document.addEventListener('click',()=>$('gearMenu').classList.remove('open'));
-$('hkBtn').onclick=()=>$('hkModal').classList.add('open');
-$('hkBtn2').onclick=()=>{$('gearMenu').classList.remove('open');$('hkModal').classList.add('open');};
-$('hkClose').onclick=()=>$('hkModal').classList.remove('open');
-$('hkModal').onclick=e=>{if(e.target.id==='hkModal')e.target.classList.remove('open');};
-$('touchpadToggle').onclick=async function(){
-  touchpadOn=!touchpadOn;this.classList.toggle('on',touchpadOn);
-  log('触控板模式：'+(touchpadOn?'开启':'关闭'));
-  try{if(api()&&api().toggle_touchpad)await api().toggle_touchpad(touchpadOn);}catch(e){log('toggle_touchpad 调用失败：'+e,'warn');}
-  toast(touchpadOn?'触控板已开启':'触控板已关闭');
+'use strict';
+const $ = id => document.getElementById(id);
+const inPy = !!(window.pywebview && window.pywebview.api);
+
+/* ---------- 与后端通信：pywebview API 优先，浏览器回退到 /api/* ---------- */
+async function backend(method, ...args) {
+    if (inPy) {
+        const f = window.pywebview.api[method];
+        if (f) { try { return await f(...args); } catch (e) { return { success:false, error:String(e) }; } }
+        return { success:false, error:'no api' };
+    }
+    const map = {
+        get_service_status: () => fetchJson('/api/status'),
+        get_recent_logs:   () => fetchJson('/api/logs'),
+        clear_logs:        () => postAction({ action:'clear_logs' }),
+        start_service:     () => postAction({ action:'start' }),
+        stop_service:      () => postAction({ action:'stop' }),
+        toggle_touchpad:   (v) => postAction({ action:'touchpad', enabled: !!v }),
+        toggle_autostart:  (v) => postAction({ action:'autostart', enabled: !!v }),
+        set_hotkey:        (h) => postAction({ action:'hotkey', hotkey: h }),
+    };
+    const fn = map[method];
+    return fn ? await fn.apply(null, args) : { success:false, error:'unknown method' };
+}
+async function fetchJson(url) {
+    try { const r = await fetch(url, { cache:'no-store' }); return await r.json(); }
+    catch (e) { return { success:false, error:String(e) }; }
+}
+async function postAction(body) {
+    try {
+        const r = await fetch('/api/action', { method:'POST', cache:'no-store',
+            headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+        return await r.json();
+    } catch (e) { return { success:false, error:String(e) }; }
+}
+
+/* ---------- 状态 ---------- */
+let S = { running:false, port:0, ip:'', ips:[], touchpad_enabled:true, hotkey:'f9', auto_start:false, version:'2.2.0' };
+let curIP = '';          // 当前选中的展示 IP
+let lastLogCount = -1;
+let toastTimer = null;
+
+function pickDefaultIP() {
+    const list = (S.ips && S.ips.length) ? S.ips : [S.ip || '127.0.0.1'];
+    if (list.indexOf(curIP) === -1) curIP = list[0];
+}
+function httpBase() {
+    // pywebview 以 file:// 加载页面，图片/请求需显式指向本机服务
+    return inPy ? `http://127.0.0.1:${S.port}` : '';
+}
+
+function renderStatus() {
+    const on = S.running;
+    $('dot').className = 'dot ' + (on ? 'on' : 'off');
+    $('stateText').textContent = on ? `服务运行中 · ${S.port}` : '服务未启动';
+    $('topIp').textContent = S.ip || '--';
+    $('topPort').textContent = on ? String(S.port) : '--';
+    const btn = $('powerBtn');
+    btn.textContent = on ? '⏹ 停止服务' : '▶ 启动服务';
+    btn.classList.toggle('stop', on);
+    $('verTag').textContent = 'v' + (S.version || '2.2.0');
+    renderAddr(on);
+    renderQR(on);
+    renderIPTags();
+    $('tpChk').checked = !!S.touchpad_enabled;
+    $('hkCurrent').textContent = S.hotkey || 'f9';
+    if ($('hkSelect').value !== (S.hotkey || 'f9')) $('hkSelect').value = S.hotkey || 'f9';
+    $('autostartChk').checked = !!S.auto_start;
+}
+
+function renderAddr(on) {
+    const box = $('addrBox');
+    const ph  = $('qrPh');
+    if (!on) { box.style.display = 'none'; return; }
+    pickDefaultIP();
+    const port = S.port;
+    const host = curIP || S.ip || '127.0.0.1';
+    const httpA = `http://${host}:${port}`;
+    box.style.display = 'block';
+    $('httpAddr').textContent = httpA;
+    $('wsAddr').textContent = `ws://${host}:${port}/ws`;
+    ph.style.display = 'none';
+}
+
+let qrTimer = null;
+function renderQR(on) {
+    const frame = $('qrFrame'), img = $('qrImg'), ph = $('qrPh');
+    if (!on) {
+        if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+        img.style.display = 'none'; ph.style.display = '';
+        frame.classList.add('placeholder');
+        return;
+    }
+    ph.style.display = 'none';
+    frame.classList.remove('placeholder');
+    const target = curIP || S.ip || '127.0.0.1';
+    img.onload = () => { img.style.display = ''; };
+    const refresh = () => { img.src = `${httpBase()}/qr?ip=${encodeURIComponent(target)}&t=${Date.now()}`; };
+    refresh();
+    if (!qrTimer) qrTimer = setInterval(refresh, 5000);
+}
+
+function renderIPTags() {
+    const wrap = $('ipTags');
+    const list = (S.ips && S.ips.length) ? S.ips : [S.ip || '127.0.0.1'];
+    const cur = curIP || S.ip || '127.0.0.1';
+    wrap.innerHTML = '';
+    list.forEach(ip => {
+        const b = document.createElement('button');
+        b.className = 'ip-tag' + (ip === cur ? ' active' : '');
+        b.textContent = ip;
+        b.onclick = () => { curIP = ip; renderStatus(); toast(`已切换地址 ${ip}`); };
+        wrap.appendChild(b);
+    });
+}
+
+/* ---------- 日志 ---------- */
+function logLine(node) {
+    const el = document.createElement('div');
+    el.className = 'line ' + (node.level || 'info');
+    const lvl = (node.level || 'info').toUpperCase();
+    el.innerHTML = `<span class="t">${esc(node.time || '')}</span><span class="l">${esc(lvl)}</span>${esc(node.msg || '')}`;
+    return el;
+}
+function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+async function pollLogs() {
+    const r = await backend('get_recent_logs');
+    if (!r || !r.success || !Array.isArray(r.logs)) return;
+    const box = $('logs');
+    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
+    box.innerHTML = '';
+    r.logs.forEach(n => box.appendChild(logLine(n)));
+    if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+/* ---------- 控制动作 ---------- */
+async function togglePower() {
+    const on = S.running;
+    $('powerBtn').disabled = true;
+    const r = on ? await backend('stop_service') : await backend('start_service');
+    $('powerBtn').disabled = false;
+    if (r && r.success !== false) { S = Object.assign(S, r); renderStatus(); pollLogs(); }
+    toast(on ? '服务已停止' : (S.running ? `服务已启动，端口 ${S.port}` : '服务启动失败，查看日志'));
+}
+$('powerBtn').onclick = togglePower;
+
+$('tpChk').addEventListener('change', async (e) => {
+    const r = await backend('toggle_touchpad', e.target.checked);
+    if (r && r.success !== false) {
+        S.touchpad_enabled = r.touchpad_enabled != null ? r.touchpad_enabled : e.target.checked;
+        $('tpStateHint').textContent = S.touchpad_enabled ? '开启后，手机可当无线触控板操控电脑' : '已关闭：手机触控板指令会被忽略';
+        toast(S.touchpad_enabled ? '触控板模式：开' : '触控板模式：关');
+    }
+});
+
+$('autostartChk').addEventListener('change', async (e) => {
+    const r = await backend('toggle_autostart', e.target.checked);
+    if (r && r.success !== false) { S.auto_start = !!r.enabled; toast(S.auto_start ? '已开启开机自启' : '已关闭开机自启'); }
+    else { e.target.checked = !e.target.checked; toast('设置开机自启失败（仅 Windows 支持）'); }
+});
+
+$('clearLogsBtn').onclick = () => { backend('clear_logs'); $('logs').innerHTML = ''; };
+$('copyHttp').onclick = async () => {
+    const text = $('httpAddr').textContent;
+    let ok = false;
+    if (inPy && window.pywebview.api.copy_to_clipboard) {
+        const r = await window.pywebview.api.copy_to_clipboard(text);
+        ok = r && r.success;
+    }
+    if (!ok) {
+        try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { ok = false; }
+    }
+    if (!ok) { // 兜底
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); ok = true; } catch (e) {}
+        ta.remove();
+    }
+    toast(ok ? '已复制地址' : '复制失败');
 };
-$('autostartToggle').onclick=async function(){
-  const next=!this.classList.contains('on');this.classList.toggle('on',next);
-  try{if(api()&&api().toggle_autostart)await api().toggle_autostart(next);
-  else if(api()&&api().set_auto_start)await api().set_auto_start(next);}catch(e){log('开机自启切换失败：'+e,'warn');}
-  log('开机自启：'+(next?'开':'关'));toast(next?'开机自启已开启':'开机自启已关闭');
+
+/* ---------- 齿轮菜单 / 弹窗 ---------- */
+$('gearBtn').onclick = (e) => { e.stopPropagation(); $('gearMenu').classList.toggle('hidden'); };
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.gear-wrap')) $('gearMenu').classList.add('hidden');
+});
+$('minimizeBtn').onclick = () => { if (inPy) window.pywebview.api.minimize_window(); };
+$('quitBtn').onclick = async () => {
+    if (inPy) { await window.pywebview.api.exit_app(); }
+    else { await backend('stop_service'); toast('服务已停止，可关闭本页'); }
 };
-$('btnStartStop').onclick=async ()=>{
-  serviceRunning=!serviceRunning;
-  $('btnStartStop').textContent=serviceRunning?'⏹ 停止服务':'▶ 启动服务';
-  $('btnStartStop').classList.toggle('active',serviceRunning);
-  try{if(api()){if(serviceRunning&&api().start_service)await api().start_service();if(!serviceRunning&&api().stop_service)await api().stop_service();}}catch(e){}
-  setRunningUI(serviceRunning);log(serviceRunning?'服务启动':'服务停止');
-};
-function setRunningUI(on){
-  $('statusDot').classList.toggle('on',on);
-  $('statusText').textContent=on?'服务运行中':'服务未启动';
-  $('qrImage').style.display=on?'block':'none';
-  $('qrPlaceholder').style.display=on?'none':'block';
-  if(on){refreshAddr();startQR();fetchIPs();}else{stopQR();$('wsAddress').textContent='ws://--:--';$('statusMeta').textContent='IP -- · 端口 --';}
+
+// 快捷键
+(function initHk() {
+    const sel = $('hkSelect');
+    ['f1','f2','f3','f4','f5','f6','f7','f8','f9','f10','f11','f12','insert','home','end','delete','backspace','enter'].forEach(k => {
+        const o = document.createElement('option'); o.value = k; o.textContent = k.toUpperCase();
+        sel.appendChild(o);
+    });
+    $('hkEntry').onclick = () => { $('hkModal').classList.remove('hidden'); };
+    $('hkCancel').onclick = () => $('hkModal').classList.add('hidden');
+    $('hkSave').onclick = async () => {
+        const hk = $('hkSelect').value;
+        const r = await backend('set_hotkey', hk);
+        if (r && r.success !== false) { S.hotkey = r.hotkey || hk; renderStatus(); toast(`清屏热键已设为 ${(r.hotkey || hk).toUpperCase()}`); }
+        else toast('设置失败：' + ((r && r.error) || '未知错误'));
+        $('hkModal').classList.add('hidden');
+    };
+    $('hkModal').addEventListener('click', (e) => { if (e.target === $('hkModal')) $('hkModal').classList.add('hidden'); });
+})();
+
+/* ---------- 轮询 ---------- */
+function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
-function refreshAddr(){
-  if(curIP&&curPort){$('wsAddress').textContent=`ws://${curIP}:${curPort}`;$('statusMeta').textContent=`本机 ${curIP} · 端口 ${curPort}`;}
+
+async function pollStatus() {
+    const r = await backend('get_service_status');
+    if (r && r.success !== false) {
+        const wasRunning = S.running;
+        S = Object.assign(S, r);
+        if (!curIP && S.ips && S.ips.length) curIP = S.ips[0];
+        if (!curIP) pickDefaultIP();
+        if (wasRunning !== S.running) pollLogs();
+        renderStatus();
+    }
 }
-function startQR(){stopQR();updQR();qrTimer=setInterval(updQR,5000);}
-function stopQR(){if(qrTimer){clearInterval(qrTimer);qrTimer=null;}}
-function updQR(){if(!serviceRunning)return;const p=curPort||5000;$('qrImage').src=`/qr?t=${Date.now()}`;$('qrImage').onerror=()=>{$('qrImage').src=`http://127.0.0.1:${p}/qr?t=${Date.now()}`;};}
-$('copyBtn').onclick=async ()=>{
-  const t=$('wsAddress').textContent;
-  try{await navigator.clipboard.writeText(t);toast('地址已复制');}
-  catch(e){try{if(api()&&api().copy_to_clipboard)await api().copy_to_clipboard(t);}catch(_){}toast('已尝试复制');}
-};
-async function fetchIPs(){
-  try{
-    if(api()&&api().get_ip_list){const r=await api().get_ip_list();renderIPs(r.ips||[]);}
-    if(api()&&api().get_port){const r=await api().get_port();if(r.port)curPort=r.port;}
-    if(!curIP){const ips=[...document.querySelectorAll('.ip-item')].map(e=>e.dataset.ip);if(ips.length)curIP=ips[0];}
-    refreshAddr();
-  }catch(e){log('获取 IP 失败：'+e,'warn');}
-}
-function renderIPs(ips){
-  const box=$('ipList');box.innerHTML='';
-  if(!ips.length){box.innerHTML='<div style="font-size:12px;color:#888">无可用 IP</div>';return;}
-  ips.forEach((ip,i)=>{
-    const d=document.createElement('div');d.className='ip-item'+(i===0?' active':'');d.textContent=ip;d.dataset.ip=ip;
-    d.onclick=()=>{document.querySelectorAll('.ip-item').forEach(e=>e.classList.remove('active'));d.classList.add('active');curIP=ip;refreshAddr();updQR();log('切换 IP：'+ip);};
-    box.appendChild(d);
-  });
-  if(!curIP)curIP=ips[0];
-}
-async function initAutostart(){
-  try{
-    let r=null;
-    if(api()&&api().get_autostart_status)r=await api().get_autostart_status();
-    else if(api()&&api().get_auto_start)r=await api().get_auto_start();
-    if(r&&r.enabled)$('autostartToggle').classList.add('on');
-  }catch(e){}
-}
-window.addEventListener('pywebviewready',()=>{fetchIPs();initAutostart();log('桌面 GUI 已加载 920x660 resizable');});
-window.addEventListener('load',()=>{setTimeout(()=>{if(window.pywebview){fetchIPs();initAutostart();}},500);});
+
+// 日志面板默认展示启动过程日志
+pollLogs();
+pollStatus();
+setInterval(pollStatus, 1000);
+setInterval(pollLogs, 1000);
 </script>
 </body>
 </html>
