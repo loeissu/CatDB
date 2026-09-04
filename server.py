@@ -28,7 +28,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.7"
+__version__ = "2.2.8"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -771,6 +771,17 @@ async def handle_vendor_asset(req):
     except Exception:
         return web.Response(status=404)
 
+
+async def handle_manifest(req):
+    """www/manifest.json：手机页声明了 <link rel="manifest">，浏览器访问时能取到（避免 404）"""
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(base, 'www', 'manifest.json')
+    if not os.path.isfile(path):
+        return web.Response(status=404)
+    with open(path, 'rb') as f:
+        data = f.read()
+    return web.Response(body=data, content_type='application/manifest+json', headers={'Cache-Control': 'no-cache'})
+
 # ============== 日志回环缓冲（供桌面 GUI 日志面板） ==============
 import collections
 LOG_BUFFER = collections.deque(maxlen=400)
@@ -1030,6 +1041,7 @@ def _start_service_inner():
         app.router.add_get('/qr', handle_qr)
         app.router.add_get('/desktop.html', handle_desktop)
         app.router.add_get('/vendor/{name:.*}', handle_vendor_asset)
+        app.router.add_get('/manifest.json', handle_manifest)
         # JSON API（浏览器模式的桌面 GUI 使用；pywebview 模式走 window.pywebview.api）
         app.router.add_get('/api/status', handle_api_status)
         app.router.add_get('/api/logs', handle_api_logs)

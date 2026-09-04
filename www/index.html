@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <!-- CHANGED: 声明 Web App Manifest 与 theme-color，状态栏/浏览器 UI 颜色与页面主题一致 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#F9F5F0">
     <title>豆包喵喵</title>
     <!-- Capacitor 运行时（原生桥）与状态栏插件代理：无打包环境的纯 HTML 也要能调原生状态栏 -->
     <script src="vendor/capacitor.js"></script>
@@ -76,7 +79,7 @@
             display: flex;
             flex-direction: column;
             /* 底部留白：压缩hotkey bar高度后同步缩减，保持不遮挡主内容 */
-            padding: 12px 14px calc(68px + env(safe-area-inset-bottom));
+            padding: calc(12px + env(safe-area-inset-top)) 14px calc(68px + env(safe-area-inset-bottom)); /* CHANGED: 顶部预留刘海安全区，内容不与状态栏重叠 */
             overflow: hidden;
         }
 
@@ -1250,11 +1253,25 @@
             if (pref !== 'light' && pref !== 'dark') pref = 'auto';
             const dark = pref === 'dark' || (pref === 'auto' && mq && mq.matches);
             document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+            // CHANGED: 动态更新 theme-color（PWA/浏览器全屏时状态栏颜色随主题：浅色=米底，深色=深底）
+            const metaTc = document.querySelector('meta[name="theme-color"]');
+            if (metaTc) metaTc.setAttribute('content', dark ? '#14100D' : '#F9F5F0');
             // 原生状态栏随主题：浅色=米色底+深色图标；深色=深底+浅图标。
             // 仅在真正的原生 App 里调用（浏览器无原生桥，避免误调）；插件由 vendor 脚本注册。
             if (!isNative) return;
             try {
-                const SB = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
+                const cap = window.Capacitor;
+                // 首选：原生 CatDBStatusBar 插件（WindowInsetsControllerCompat 直控，Android 15 可靠）
+                let sb2 = cap && cap.Plugins && cap.Plugins.CatDBStatusBar;
+                if (!sb2 && cap && cap.registerPlugin) {
+                    sb2 = cap.registerPlugin('CatDBStatusBar'); // 原生端已注册，获取代理
+                }
+                if (sb2 && sb2.setTheme) {
+                    sb2.setTheme({ dark: !!dark });
+                    return;
+                }
+                // 兜底：官方 StatusBar 插件
+                const SB = cap && cap.Plugins && cap.Plugins.StatusBar;
                 if (SB) {
                     if (SB.setOverlaysWebView) SB.setOverlaysWebView({ overlay: false });
                     if (SB.setBackgroundColor) SB.setBackgroundColor({ color: dark ? '#14100D' : '#F9F5F0' });

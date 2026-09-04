@@ -4,8 +4,8 @@
   "description": "手机语音输入 → 电脑实时上屏",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#FFF9F0",
-  "theme_color": "#5D4037",
+  "background_color": "#F9F5F0",
+  "theme_color": "#F9F5F0",
   "orientation": "portrait",
   "icons": [
     {

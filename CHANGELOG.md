@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.2.8] - 2026-09-04
+
+### Fixed（状态栏原生直控 + 图标矢量重绘 + PWA 主题色）
+- **状态栏图标明暗在 Android 15 上仍不可靠**：@capacitor/status-bar 6.0.3 走 `setSystemUiVisibility` 旧 API，在 Android 15 系统上被忽略。新增原生插件 `CatDBStatusBar`（WindowInsetsControllerCompat 直控状态栏/导航栏图标明暗与背景色），注册进 MainActivity 并在冷启动时按系统夜间模式设置一次；JS 主题切换改为优先调用该插件（官方 StatusBar 插件保留为兑底）
+- **安卓图标仍看不清**：放弃放大 128px 复杂原图（持手机+卡片）的旧方案，改用矢量式重绘——圆角米色底 + 三角尖耳橙猫 + 深棕粗描边 + 大眼高光，无细碎细节；legacy 全套与自适应前景按 66% 安全区重新生成，48px 起各尺寸清晰可辨
+- **PWA 状态栏/浏览器 UI 颜色与主题脱节**：index.html 此前未声明 manifest 与 theme-color。新增 manifest 链接与 theme-color meta（浅色 #F9F5F0），主题切换时动态更新（深色 #14100D）；manifest theme_color/background_color 由不匹配的深棕改为浅色主题色
+- **顶部安全区**：body 顶部预留 `env(safe-area-inset-top)`，避免刘海/全屏形态下内容与状态栏重叠；html/body margin 归零（通配已含）
+- 版本号统一升至 2.2.8（versionCode 10）
+
 ## [2.2.7] - 2026-09-04
 
 ### Fixed（安卓状态栏/主题/图标专项）
