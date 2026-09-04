@@ -12,7 +12,8 @@ a = Analysis(
     ['server.py'],
     pathex=[],
     binaries=webview_binaries,
-    datas=[('www', 'www')] + webview_datas,
+    # www/（页面资源）+ cat_icon.ico（托盘图标与 EXE 同款）
+    datas=[('www', 'www'), ('cat_icon.ico', '.')] + webview_datas,
     hiddenimports=[
         'webview', 'webview.platforms.edgechromium', 'webview.platforms.winforms', 'webview.platforms.mshtml',
         'pystray', 'pystray._win32',

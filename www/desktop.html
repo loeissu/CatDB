@@ -234,8 +234,20 @@
         flex: 0 0 auto; display: flex; flex-direction: column;
         margin: 0 20px 18px; background: #1E1E20; border-radius: 16px;
         box-shadow: 0 2px 14px rgba(0,0,0,.08);
-        overflow: hidden; resize: vertical; min-height: 96px; max-height: 280px; height: 148px;
+        overflow: hidden; resize: vertical; min-height: 96px; max-height: 62vh; height: 178px;
     }
+    /* 日志区拖拽分隔条（按住上下拖动放大/缩小） */
+    .logdrag {
+        flex: 0 0 auto; height: 7px; cursor: ns-resize; position: relative;
+        background: transparent;
+    }
+    .logdrag::after {
+        content: ""; position: absolute; left: 50%; top: 2px; transform: translateX(-50%);
+        width: 44px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.18);
+        transition: background .15s;
+    }
+    .logdrag:hover::after, .logbar.dragging .logdrag::after { background: var(--accent); }
+    .logbar.dragging { user-select: none; }
     .loghead {
         flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
         padding: 7px 14px; background: #2A2A2C;
@@ -248,12 +260,16 @@
         padding: 3px 9px; border-radius: 7px; transition: background .15s;
     }
     .clear-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+    .clear-btn.copied { color: #34C759; }
     .logbar.collapsed { height: 38px !important; min-height: 38px !important; }
+    .logbar.collapsed .logdrag { display: none; }
     .logbar.collapsed .logs { display: none; }
     .logs {
         flex: 1 1 auto; overflow-y: auto; padding: 7px 14px 12px;
         font-family: var(--mono); font-size: 12px; line-height: 1.65;
         white-space: pre-wrap; word-break: break-all;
+        user-select: text; -webkit-user-select: text;
+        cursor: text;
     }
     .logs::-webkit-scrollbar { width: 9px; }
     .logs::-webkit-scrollbar-thumb { background: #48484A; border-radius: 5px; border: 2px solid #1E1E20; }
@@ -369,7 +385,7 @@
     <div class="brand">
         <span class="logo">🐱</span>
         <span class="name">豆包喵喵</span>
-        <span class="ver" id="verTag">v2.2.13</span>
+        <span class="ver" id="verTag">v2.2.14</span>
     </div>
     <span class="state-pill" id="statePill"><span class="dot"></span><span id="stateText">正在连接…</span></span>
     <div class="meta">
@@ -403,6 +419,10 @@
             <button class="menu-btn" id="minimizeBtn">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
                 最小化到托盘
+            </button>
+            <button class="menu-btn" id="firewallBtn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5.25 3.4 9.74 8 11 4.6-1.26 8-5.75 8-11V5l-8-3z"/></svg>
+                防火墙放行（手机连不上时点这里）
             </button>
             <button class="menu-btn danger" id="quitBtn">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -467,9 +487,11 @@
 
 <!-- 日志 -->
 <footer class="logbar" id="logBar">
+    <div class="logdrag" id="logDrag" title="拖动调整日志高度"></div>
     <div class="loghead">
         <span class="lt">运行日志</span>
         <span class="sp"></span>
+        <button class="clear-btn" id="copyLogsBtn" title="复制全部日志">复制</button>
         <button class="clear-btn" id="logToggle" title="展开 / 收起日志">收起</button>
         <button class="clear-btn" id="clearLogsBtn">清空</button>
     </div>
@@ -562,7 +584,7 @@ async function postAction(body) {
 
 /* ---------- 状态 ---------- */
 let S = { running: false, port: 0, ip: '', ips: [], touchpad_enabled: true, hotkey: 'f9',
-          auto_start: false, version: '2.2.13', live_typing: '', live_typing_ts: 0 };
+          auto_start: false, version: '2.2.14', live_typing: '', live_typing_ts: 0 };
 let curIP = '';
 let toastTimer = null;
 let qrTimer = null;
@@ -584,7 +606,7 @@ function renderStatus() {
     $('stateText').textContent = on ? `服务运行中 · ${S.port}` : '服务未启动';
     $('topIp').textContent = S.ip || '—';
     $('topPort').textContent = on ? String(S.port) : '—';
-    $('verTag').textContent = 'v' + (S.version || '2.2.13');
+    $('verTag').textContent = 'v' + (S.version || '2.2.14');
     const btn = $('powerBtn');
     btn.textContent = on ? '停止服务' : '启动服务';
     btn.classList.toggle('stop', on);
@@ -642,21 +664,34 @@ function renderIPTags() {
 function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+let lastLogCount = -1;
+function makeLogLine(n) {
+    const el = document.createElement('div');
+    el.className = 'line ' + (n.level || 'info');
+    el.innerHTML = `<span class="t">${esc(n.time || '')}</span><span class="l">${esc((n.level || 'info').toUpperCase())}</span>${esc(n.msg || '')}`;
+    return el;
+}
 async function pollLogs() {
     const r = await backend('get_recent_logs');
     if (!r || !r.success || !Array.isArray(r.logs)) return;
     const box = $('logs');
-    const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 60;
-    const frag = document.createDocumentFragment();
-    r.logs.forEach(n => {
-        const el = document.createElement('div');
-        el.className = 'line ' + (n.level || 'info');
-        el.innerHTML = `<span class="t">${esc(n.time || '')}</span><span class="l">${esc((n.level || 'info').toUpperCase())}</span>${esc(n.msg || '')}`;
-        frag.appendChild(el);
-    });
-    box.innerHTML = '';
-    box.appendChild(frag);
-    if (stick) box.scrollTop = box.scrollHeight;
+    // 增量渲染：只在数量变化时追加/修正，绝不整体重建（避免打断用户选中复制）
+    const n = r.logs.length;
+    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 60;
+    if (lastLogCount === -1 || n < lastLogCount || (n > 0 && box.children.length > n)) {
+        // 首次 / 清空过 / 数量收缩：整体重建一次
+        const frag = document.createDocumentFragment();
+        r.logs.forEach(x => frag.appendChild(makeLogLine(x)));
+        box.innerHTML = '';
+        box.appendChild(frag);
+    } else if (n > box.children.length) {
+        // 追加新增的行
+        const frag = document.createDocumentFragment();
+        for (let i = box.children.length; i < n; i++) frag.appendChild(makeLogLine(r.logs[i]));
+        box.appendChild(frag);
+    }
+    lastLogCount = n;
+    if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
 /* ---------- 控制动作 ---------- */
@@ -705,7 +740,74 @@ $('autostartChk').addEventListener('change', async (e) => {
     }
 });
 
-$('clearLogsBtn').onclick = () => { backend('clear_logs'); $('logs').innerHTML = ''; };
+$('clearLogsBtn').onclick = () => { backend('clear_logs'); $('logs').innerHTML = ''; lastLogCount = -1; };
+
+/* 复制日志全部内容 */
+$('copyLogsBtn').onclick = async () => {
+    const text = Array.from($('logs').querySelectorAll('.line')).map(el => el.textContent).join('\n');
+    if (!text) { toast('日志暂无内容'); return; }
+    let ok = false;
+    if (bridgeReady() && window.pywebview.api.copy_to_clipboard) {
+        const r = await window.pywebview.api.copy_to_clipboard(text);
+        ok = r && r.success;
+    }
+    if (!ok) {
+        try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { ok = false; }
+    }
+    if (!ok) {
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { ok = document.execCommand('copy'); } catch (e) {}
+        ta.remove();
+    }
+    const btn = $('copyLogsBtn');
+    btn.textContent = ok ? '已复制 ✓' : '复制失败';
+    btn.classList.toggle('copied', ok);
+    setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1500);
+};
+
+/* 日志区拖拽拉伸 */
+(function () {
+    const bar = $('logBar'), drag = $('logDrag');
+    let startY = 0, startH = 0, dragging = false;
+    drag.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        dragging = true; startY = e.clientY; startH = bar.offsetHeight;
+        bar.classList.add('dragging');
+        document.body.style.cursor = 'ns-resize';
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const dh = e.clientY - startY;
+        const vh = window.innerHeight;
+        const minH = 96, maxH = Math.round(vh * 0.62);
+        bar.style.height = Math.max(minH, Math.min(maxH, startH + dh)) + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        bar.classList.remove('dragging');
+        document.body.style.cursor = '';
+        try { localStorage.setItem('logHeight', bar.style.height); } catch (e) {}
+    });
+    try {
+        const saved = localStorage.getItem('logHeight');
+        if (saved) bar.style.height = saved;
+    } catch (e) {}
+})();
+
+/* 防火墙一键放行 */
+$('firewallBtn').onclick = async () => {
+    let r = null;
+    if (bridgeReady() && window.pywebview.api.allow_firewall) r = await window.pywebview.api.allow_firewall();
+    else r = await postAction({ action: 'allow_firewall' });
+    if (r && r.success) {
+        toast(r.exists ? '防火墙已放行 ✓' : '防火墙已放行，手机现在可以连接 ✓');
+        if (r.elevated) toast('已通过管理员授权完成 ✓');
+    } else {
+        toast('放行失败：' + ((r && (r.error || r.message)) || '请以管理员身份运行'));
+    }
+};
 
 /* 日志收起/展开 */
 (function () {

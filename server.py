@@ -64,7 +64,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.13"
+__version__ = "2.2.14"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -1074,6 +1074,10 @@ async def handle_api_action(req):
     if action == 'clear_logs':
         clear_log_buffer()
         return _json({'success': True})
+    if action in ('allow_firewall', 'firewall_allow'):
+        return _json(add_firewall_rule())
+    if action == 'firewall_status':
+        return _json({'success': True, 'allowed': firewall_rule_exists()})
     return _json({'success': False, 'error': f'unknown action: {action}'}, 400)
 
 # ============== 服务生命周期（可启动/停止的 aiohttp 服务） ==============
@@ -1261,6 +1265,77 @@ def _show_gui_window():
         return False
 
 
+# ============== Windows 防火墙放行（解决手机扫二维码打不开 / 每启动弹窗） ==============
+FIREWALL_RULE_NAME = 'CatDB Desktop (5000-5010)'
+
+
+def _run_netsh(args):
+    """运行 netsh 并安全解码中文 GBK 输出"""
+    return subprocess.run(
+        args, capture_output=True, timeout=15,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+        encoding='gbk', errors='replace')
+
+
+def firewall_rule_exists():
+    """检查入站规则是否已添加（普通权限即可查询）"""
+    try:
+        r = _run_netsh(['netsh', 'advfirewall', 'firewall', 'show', 'rule', f'name={FIREWALL_RULE_NAME}'])
+        if r.returncode != 0:
+            return False
+        text = (r.stdout or '') + ' ' + (r.stderr or '')
+        # 规则存在时 netsh 会列出规则详情；不存在时提示「没有匹配的规则」/ No rules match
+        return '没有匹配' not in text and 'No rules match' not in text and '规则名称' in text
+    except Exception:
+        return False
+
+
+def add_firewall_rule():
+    """主动添加入站放行规则（TCP 5000-5010）。需要管理员权限；非管理员时尝试提权执行。"""
+    if platform.system() != 'Windows':
+        return {'success': False, 'error': '仅 Windows 需要防火墙放行'}
+    if firewall_rule_exists():
+        logger.info('🛡️ 防火墙规则已存在，无需重复添加')
+        return {'success': True, 'exists': True}
+    # 用「端口范围」规则（TCP 5000-5010）而非程序路径：
+    # PyInstaller onefile 的子进程每次在随机 _MEI 临时目录运行，按程序路径匹配不到，
+    # 防火墙会每次重新弹窗；按端口放行则与路径无关，一次放行永久生效
+    rule_args = ['netsh', 'advfirewall', 'firewall', 'add', 'rule',
+                 f'name={FIREWALL_RULE_NAME}', 'dir=in', 'action=allow',
+                 'protocol=TCP', 'localport=5000-5010', 'enable=yes', 'profile=any']
+    cmd = ' '.join(rule_args)
+    # 先试当前权限；失败再提权（ShellExecuteW runas）
+    try:
+        r = _run_netsh(rule_args)
+        if r.returncode == 0:
+            logger.info('🛡️ 防火墙入站规则已添加（TCP 5000-5010）')
+            return {'success': True, 'elevated': False}
+        logger.warning('防火墙规则添加失败: %s %s', r.stdout.strip()[-200:], r.stderr.strip()[-200:])
+    except Exception as e:
+        logger.warning('防火墙规则添加失败（普通权限）: %s', e)
+    # 提权执行（会弹 UAC 确认框）
+    try:
+        import ctypes
+        res = ctypes.windll.shell32.ShellExecuteW(
+            None, 'runas', 'netsh', cmd, None, 1)
+        if res > 32:
+            logger.info('🛡️ 防火墙规则已通过提权添加')
+            return {'success': True, 'elevated': True}
+        logger.warning('🛡️ 用户取消了防火墙提权确认，手机将无法从局域网访问')
+        return {'success': False, 'elevated': False, 'error': '已取消提权'}
+    except Exception as e:
+        logger.warning('防火墙提权添加失败: %s', e)
+        return {'success': False, 'error': str(e)}
+
+
+def on_tray_firewall(icon, item):
+    r = add_firewall_rule()
+    if r.get('success'):
+        logger.info('🛡️ 防火墙已放行，手机即可连接（若仍连不上请确认同一 Wi-Fi）')
+    else:
+        logger.info('🛡️ 防火墙放行未完成：%s', r.get('error', '未知'))
+
+
 def update_tray_status(status_text, icon_path=None):
     global tray_icon
     if tray_icon is None:
@@ -1317,28 +1392,52 @@ def on_tray_exit(icon, item):
             pass
     os._exit(0)
 
+
+def _tray_image():
+    """托盘图标：优先使用与 EXE 相同的 cat_icon.ico，缺失/损坏时回退内置猫头绘制"""
+    from PIL import Image, ImageDraw
+    for cand in (_resource_path('cat_icon.ico'),
+                 _resource_path(os.path.join('www', 'cat_icon.ico')),
+                 _resource_path(os.path.join('www', 'cat_icon.svg'))):
+        try:
+            if not os.path.exists(cand):
+                continue
+            im = Image.open(cand)
+            im = im.convert('RGBA')
+            # 托盘通常 16-32px，取 64px 平滑缩放
+            im = im.resize((64, 64), Image.LANCZOS)
+            if im.getbbox():
+                logger.info('🐾 托盘图标使用 EXE 同款图标: %s', os.path.basename(cand))
+                return im
+        except Exception:
+            continue
+    # 回退：内置猫头绘制
+    img = Image.new('RGBA', (64, 64), (255, 183, 77, 255))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([16, 24, 48, 56], fill='#5D4037')
+    draw.ellipse([12, 12, 24, 24], fill='#5D4037')
+    draw.ellipse([24, 8, 36, 20], fill='#5D4037')
+    draw.ellipse([36, 12, 48, 24], fill='#5D4037')
+    draw.ellipse([20, 30, 44, 52], fill='#FFE0B2')
+    return img
+
+
 def create_tray_icon():
     """创建系统托盘图标（菜单项避免 tkinter，二维码直接打开浏览器）"""
     global tray_icon, _tray_active
     try:
         import pystray
-        from PIL import Image, ImageDraw
-        img = Image.new('RGBA', (64, 64), (255, 183, 77, 255))
-        draw = ImageDraw.Draw(img)
-        draw.ellipse([16, 24, 48, 56], fill='#5D4037')
-        draw.ellipse([12, 12, 24, 24], fill='#5D4037')
-        draw.ellipse([24, 8, 36, 20], fill='#5D4037')
-        draw.ellipse([36, 12, 48, 24], fill='#5D4037')
-        draw.ellipse([20, 30, 44, 52], fill='#FFE0B2')
 
         menu = pystray.Menu(
             pystray.MenuItem('🌐 打开面板', on_tray_open, default=True),
             pystray.MenuItem('📱 显示二维码', on_tray_qr),
             pystray.MenuItem('📋 显示 IP', on_tray_show_ip),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem('🛡️ 防火墙放行（解决手机连不上）', on_tray_firewall),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem('退出', on_tray_exit),
         )
-        tray_icon = pystray.Icon('catdb', img, '豆包喵喵 - 服务运行中', menu)
+        tray_icon = pystray.Icon('catdb', _tray_image(), '豆包喵喵 - 服务运行中', menu)
         threading.Thread(target=tray_icon.run, daemon=True).start()
         _tray_active = True
         logger.info('🐾 系统托盘已启动')
@@ -1454,6 +1553,17 @@ class WebviewAPI:
         except Exception as e:
             logger.error('复制失败: %s', e)
             return {"success": False, "error": str(e)}
+
+    def firewall_status(self):
+        """查询 Windows 防火墙是否已为 CatDB 放行（决定「一键放行」按钮状态）"""
+        if platform.system() != 'Windows':
+            return {"success": False, "unsupported": True}
+        return {"success": True, "allowed": firewall_rule_exists()}
+
+    def allow_firewall(self):
+        """一键放行 Windows 防火墙（需要管理员权限，会弹 UAC 确认）"""
+        r = add_firewall_rule()
+        return r
 
     def refresh_qr(self):
         return {"success": True}
@@ -1887,6 +1997,10 @@ def run_gui_mode():
     ok, port = start_service_now()
     if ok:
         splash_set(28, '本地服务已就绪')
+        # 防火墙未放行时，手机将无法从局域网访问 —— 首次启动自动引导一键放行
+        if platform.system() == 'Windows' and not firewall_rule_exists():
+            splash_set(36, '正在检查网络防火墙…')
+            logger.info('🛡️ 检测到 Windows 防火墙尚未放行 CatDB，手机将无法通过局域网连接；点击托盘菜单或设置里的「防火墙放行」可一键解决')
     else:
         splash_set(28, '本地服务未启动（可稍后手动启动）')
         logger.warning('后端服务未能自动启动，界面将以“未运行”状态打开（可手动点击启动）')
