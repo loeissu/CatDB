@@ -369,7 +369,7 @@
     <div class="brand">
         <span class="logo">🐱</span>
         <span class="name">豆包喵喵</span>
-        <span class="ver" id="verTag">v2.2.12</span>
+        <span class="ver" id="verTag">v2.2.13</span>
     </div>
     <span class="state-pill" id="statePill"><span class="dot"></span><span id="stateText">正在连接…</span></span>
     <div class="meta">
@@ -562,7 +562,7 @@ async function postAction(body) {
 
 /* ---------- 状态 ---------- */
 let S = { running: false, port: 0, ip: '', ips: [], touchpad_enabled: true, hotkey: 'f9',
-          auto_start: false, version: '2.2.12', live_typing: '', live_typing_ts: 0 };
+          auto_start: false, version: '2.2.13', live_typing: '', live_typing_ts: 0 };
 let curIP = '';
 let toastTimer = null;
 let qrTimer = null;
@@ -584,7 +584,7 @@ function renderStatus() {
     $('stateText').textContent = on ? `服务运行中 · ${S.port}` : '服务未启动';
     $('topIp').textContent = S.ip || '—';
     $('topPort').textContent = on ? String(S.port) : '—';
-    $('verTag').textContent = 'v' + (S.version || '2.2.12');
+    $('verTag').textContent = 'v' + (S.version || '2.2.13');
     const btn = $('powerBtn');
     btn.textContent = on ? '停止服务' : '启动服务';
     btn.classList.toggle('stop', on);

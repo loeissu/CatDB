@@ -18,7 +18,7 @@ a = Analysis(
         'pystray', 'pystray._win32',
         'aiohttp', 'aiohttp.web',
         'qrcode', 'PIL',
-        'pyautogui', 'pynput', 'pynput.keyboard._win32', 'pynput.mouse._win32', 'netifaces', 'zeroconf'
+        'pyautogui', 'pynput', 'pynput.keyboard._win32', 'pynput.mouse._win32', 'netifaces', 'zeroconf', 'zeroconf.asyncio'
     ],
     excludes=['tkinter', 'PyQt5', 'matplotlib', 'PySide2', 'PySide6'],
     cipher=block_cipher,

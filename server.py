@@ -4,6 +4,9 @@
 UI变更：精致胡须、紧凑行距、猫咪下移、字体沉底
 """
 
+import time as _clock
+_APP_START_TS = _clock.time()  # 置于所有 import 之前：统计模块导入耗时（启动优化用）
+
 import asyncio
 import socket
 import json
@@ -19,7 +22,40 @@ import signal
 import webbrowser
 from aiohttp import web
 import aiohttp
-import pyautogui
+
+
+# ---- pyautogui 懒加载：其依赖链（pyscreeze→cv2→numpy/PIL）较重，
+#      冷启动时可省约 0.3-1s，只在首次模拟键鼠操作时才真正 import ----
+class _LazyModule:
+    def __init__(self, name, after_load=None):
+        object.__setattr__(self, '_name', name)
+        object.__setattr__(self, '_after', after_load)
+        object.__setattr__(self, '_mod', None)
+
+    def _load(self):
+        mod = object.__getattribute__(self, '_mod')
+        if mod is None:
+            import importlib
+            mod = importlib.import_module(object.__getattribute__(self, '_name'))
+            after = object.__getattribute__(self, '_after')
+            if after is not None:
+                after(mod)
+            object.__setattr__(self, '_mod', mod)
+        return mod
+
+    def __getattr__(self, key):
+        return getattr(self._load(), key)
+
+    def __setattr__(self, key, value):
+        setattr(self._load(), key, value)
+
+
+def _pyautogui_init(mod):
+    mod.PAUSE = 0
+    mod.FAILSAFE = False  # 远程触控板控制场景，禁用左上角安全保护（否则移动到角落会抛异常）
+
+
+pyautogui = _LazyModule('pyautogui', _pyautogui_init)
 import pyperclip
 import subprocess
 
@@ -28,7 +64,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.12"
+__version__ = "2.2.13"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -155,9 +191,6 @@ def find_available_port(start_port, host='0.0.0.0', max_attempts=20):
         if check_port_available(host, candidate):
             return candidate
     return None
-
-pyautogui.PAUSE = 0
-pyautogui.FAILSAFE = False  # 远程触控板控制场景，禁用左上角安全保护（否则移动到角落会抛异常）
 
 def get_local_ip():
     """
@@ -1093,21 +1126,23 @@ def _start_service_inner():
         service_state['runner'] = runner
         service_state['running'] = True
 
-        # Zeroconf
+        # Zeroconf（异步 API：Windows 默认 ProactorEventLoop 下，同步 Zeroconf() 会抛 EventLoopBlocked，
+        # 导致注册一直失败；AsyncZeroconf 兼容 Proactor 循环）
         try:
-            from zeroconf import Zeroconf, ServiceInfo
-            zeroconf_instance = Zeroconf()
-            info = ServiceInfo(
+            from zeroconf.asyncio import AsyncZeroconf, AsyncServiceInfo
+            zeroconf_instance = AsyncZeroconf()
+            info = AsyncServiceInfo(
                 '_catdb._tcp.local.',
                 f'CatDB._catdb._tcp.local.',
                 addresses=[socket.inet_aton(get_local_ip())],
                 port=actual_port,
                 properties={'path': '/'},
             )
-            zeroconf_instance.register_service(info)
+            # 撞名时自动改名重试（CatDB → CatDB-2…），避免与其他实例/残留广播冲突直接失败
+            await zeroconf_instance.async_register_service(info, allow_name_change=True)
             logger.info('🔍 Zeroconf 服务已注册')
         except Exception as e:
-            logger.warning('Zeroconf 注册失败（不影响使用）: %s', e)
+            logger.warning('Zeroconf 注册失败（不影响使用）: %s: %s', type(e).__name__, e)
 
         setup_hotkey()
 
@@ -1128,8 +1163,8 @@ def _start_service_inner():
         service_state['running'] = False
         if zeroconf_instance:
             try:
-                zeroconf_instance.unregister_all_services()
-                zeroconf_instance.close()
+                await zeroconf_instance.async_unregister_all_services()
+                await zeroconf_instance.async_close()
             except Exception:
                 pass
             zeroconf_instance = None
@@ -1192,6 +1227,39 @@ def stop_service_now():
 
 # ============== 系统托盘 ==============
 tray_icon = None
+_tray_active = False       # 系统托盘是否创建成功（决定点 X 是否拦截为「最小化到托盘」）
+_gui_window = None         # GUI 模式窗口引用（托盘「打开面板」优先还原该窗口）
+_allow_exit = False        # 置 True 后放行真正退出（托盘/界面「退出」时设置）
+_SINGLE_INSTANCE_MUTEX = None
+
+
+def _on_gui_window_closing():
+    """窗口关闭拦截：点 X → 取消关闭、隐藏到系统托盘继续运行；
+    仅当 _allow_exit=True（用户从托盘或界面选择「退出」）时才放行真正关闭。"""
+    if _allow_exit:
+        return
+    try:
+        w = _gui_window
+        if w is not None:
+            w.hide()
+        logger.info('窗口已最小化到系统托盘（右键托盘图标可「退出」）')
+    except Exception as e:
+        logger.warning('隐藏窗口到托盘失败: %s', e)
+    return False  # 取消本次关闭
+
+
+def _show_gui_window():
+    """把已最小化的 GUI 窗口恢复到前台（pystray 回调线程调用；异常则降级浏览器）"""
+    w = _gui_window
+    if w is None:
+        return False
+    try:
+        w.restore()
+        w.show()
+        return True
+    except Exception:
+        return False
+
 
 def update_tray_status(status_text, icon_path=None):
     global tray_icon
@@ -1206,6 +1274,9 @@ def update_tray_status(status_text, icon_path=None):
         pass
 
 def on_tray_open(icon, item):
+    # GUI 模式：把已最小化的窗口恢复到前台；纯托盘模式：浏览器打开面板
+    if _show_gui_window():
+        return
     try:
         webbrowser.open(f'http://127.0.0.1:{CONFIG.get("port", 5000)}/desktop.html')
     except Exception:
@@ -1224,11 +1295,19 @@ def on_tray_show_ip(icon, item):
     update_tray_status(f'http://{ip}:{port}')
 
 def on_tray_exit(icon, item):
+    global _allow_exit
     logger.info('用户请求退出，正在关闭...')
+    _allow_exit = True  # 放行窗口真正关闭
     if service_is_running():
         stop_service_now()
     try:
         icon.stop()
+    except Exception:
+        pass
+    try:
+        w = _gui_window
+        if w is not None:
+            w.destroy()
     except Exception:
         pass
     if main_loop and not main_loop.is_closed():
@@ -1240,7 +1319,7 @@ def on_tray_exit(icon, item):
 
 def create_tray_icon():
     """创建系统托盘图标（菜单项避免 tkinter，二维码直接打开浏览器）"""
-    global tray_icon
+    global tray_icon, _tray_active
     try:
         import pystray
         from PIL import Image, ImageDraw
@@ -1261,6 +1340,7 @@ def create_tray_icon():
         )
         tray_icon = pystray.Icon('catdb', img, '豆包喵喵 - 服务运行中', menu)
         threading.Thread(target=tray_icon.run, daemon=True).start()
+        _tray_active = True
         logger.info('🐾 系统托盘已启动')
         return True
     except Exception as e:
@@ -1397,8 +1477,10 @@ class WebviewAPI:
             return {"success": False, "error": str(e)}
 
     def exit_app(self):
-        """退出：先停服务再关窗口（窗口关闭回调也会兜底停服务）"""
+        """退出：放行窗口关闭 → 停服务 → 销毁窗口（与托盘退出等价）"""
+        global _allow_exit
         try:
+            _allow_exit = True
             if service_is_running():
                 stop_service_now()
             for w in (webview.windows or []):
@@ -1411,10 +1493,384 @@ class WebviewAPI:
             return {"success": False, "error": str(e)}
 
     def hide_window(self):
-        return {"success": True}
+        """最小化到系统托盘（进程保留，可从托盘恢复）"""
+        try:
+            _allow_exit = False  # 确保之后点 X 仍是「最小化到托盘」
+            w = _gui_window
+            if w is not None:
+                w.hide()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
 # API 实例（在 GUI 模式使用）
 webview_api = WebviewAPI()
+
+
+# ============== 启动进度条（纯 Win32 ctypes，零第三方依赖） ==============
+# 双击 EXE 后立刻弹出品牌色启动窗口，进度条随真实启动阶段推进，
+# 主窗口真正显示（shown 事件）后自动到 100% 并关闭 —— 避免双击后长时间无反馈。
+_launch_splash = None
+
+
+class LaunchSplash:
+    """原生无边框置顶小窗：标题 + 阶段文字 + 平滑进度条。
+    在独立线程跑消息循环，set() 只更新共享状态，由窗口定时器拉取重绘，线程安全。"""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._hwnd = None
+        self._bar = None
+        self._label = None
+        self._pct_label = None
+        self._percent = 0
+        self._text = '正在启动…'
+        self._ready = threading.Event()
+
+    # ---- 供主线程调用 ----
+    def show(self):
+        if platform.system() != 'Windows':
+            return False
+        try:
+            threading.Thread(target=self._win_main, daemon=True).start()
+            return self._ready.wait(timeout=5.0)
+        except Exception:
+            return False
+
+    def set(self, percent, text=''):
+        with self._lock:
+            self._percent = max(0, min(100, int(percent)))
+            if text:
+                self._text = text
+
+    def close(self):
+        with self._lock:
+            hwnd = self._hwnd
+            self._hwnd = None
+        if hwnd:
+            try:
+                import ctypes
+                ctypes.windll.user32.PostMessageW(ctypes.c_void_p(hwnd), 0x0010, 0, 0)  # WM_CLOSE
+            except Exception:
+                pass
+
+    # ---- Win32 窗口线程 ----
+    def _win_main(self):
+        try:
+            import ctypes
+            from ctypes import wintypes as wt
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+            kernel32 = ctypes.windll.kernel32
+
+            WNDPROC = ctypes.WINFUNCTYPE(wt.LPARAM, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+
+            # ---- 函数原型（显式 argtypes/restype，避免 64 位句柄被截断） ----
+            def P(fn, restype, *args):
+                fn.restype = restype
+                fn.argtypes = list(args)
+
+            P(user32.CreateWindowExW, wt.HWND, wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD,
+              ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+              wt.HWND, wt.HMENU, wt.HINSTANCE, wt.LPVOID)
+            P(user32.DefWindowProcW, wt.LPARAM, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+            P(user32.DestroyWindow, wt.BOOL, wt.HWND)
+            P(user32.PostQuitMessage, None, ctypes.c_int)
+            P(user32.SetTimer, ctypes.c_size_t, wt.HWND, ctypes.c_size_t, wt.UINT, wt.LPVOID)
+            P(user32.PostMessageW, wt.BOOL, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+            P(user32.SendMessageW, wt.LPARAM, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+            P(user32.SetWindowTextW, wt.BOOL, wt.HWND, wt.LPCWSTR)
+            P(user32.ShowWindow, wt.BOOL, wt.HWND, ctypes.c_int)
+            P(user32.UpdateWindow, wt.BOOL, wt.HWND)
+            P(user32.SetForegroundWindow, wt.BOOL, wt.HWND)
+            P(user32.GetSystemMetrics, ctypes.c_int, ctypes.c_int)
+            P(user32.GetDC, wt.HDC, wt.HWND)
+            P(user32.ReleaseDC, ctypes.c_int, wt.HWND, wt.HDC)
+            P(user32.BeginPaint, wt.HDC, wt.HWND, ctypes.c_void_p)
+            P(user32.EndPaint, wt.BOOL, wt.HWND, ctypes.c_void_p)
+            P(user32.GetClientRect, wt.BOOL, wt.HWND, ctypes.c_void_p)
+            P(user32.InvalidateRect, wt.BOOL, wt.HWND, ctypes.c_void_p, wt.BOOL)
+            P(kernel32.GetModuleHandleW, wt.HINSTANCE, wt.LPCWSTR)
+            P(gdi32.CreateSolidBrush, wt.HBRUSH, wt.DWORD)
+            P(gdi32.SelectObject, wt.HGDIOBJ, wt.HDC, wt.HGDIOBJ)
+            P(gdi32.GetStockObject, wt.HGDIOBJ, ctypes.c_int)
+            P(gdi32.CreateFontW, wt.HFONT,
+              ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+              wt.DWORD, wt.DWORD, wt.DWORD, wt.DWORD, wt.DWORD, wt.DWORD, wt.DWORD, wt.DWORD, wt.LPCWSTR)
+            P(gdi32.SetTextColor, wt.COLORREF, wt.HDC, wt.COLORREF)
+            P(gdi32.SetBkColor, wt.COLORREF, wt.HDC, wt.COLORREF)
+            P(gdi32.GetDeviceCaps, ctypes.c_int, wt.HDC, ctypes.c_int)
+            P(gdi32.RoundRect, wt.BOOL, wt.HDC,
+              ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int)
+            P(gdi32.SaveDC, ctypes.c_int, wt.HDC)
+            P(gdi32.RestoreDC, wt.BOOL, wt.HDC, ctypes.c_int)
+            P(gdi32.IntersectClipRect, ctypes.c_int, wt.HDC,
+              ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int)
+
+            class _WNDCLASSEXW(ctypes.Structure):
+                _fields_ = [
+                    ('cbSize', wt.UINT), ('style', wt.UINT),
+                    ('lpfnWndProc', WNDPROC), ('cbClsExtra', ctypes.c_int), ('cbWndExtra', ctypes.c_int),
+                    ('hInstance', wt.HINSTANCE), ('hIcon', wt.HICON), ('hCursor', ctypes.c_void_p),
+                    ('hbrBackground', wt.HBRUSH), ('lpszMenuName', wt.LPCWSTR), ('lpszClassName', wt.LPCWSTR),
+                    ('hIconSm', wt.HICON),
+                ]
+
+            class _PAINTSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ('hdc', wt.HDC), ('fErase', wt.BOOL),
+                    ('rcPaint', wt.RECT), ('fRestore', wt.BOOL), ('fIncUpdate', wt.BOOL),
+                    ('rgbReserved', ctypes.c_ubyte * 32),
+                ]
+
+            # 配色：白色圆角卡片 + 深棕标题 + 暖灰说明 + 品牌橙进度条
+            WHITE = 0x00FFFFFF     # 主卡片底
+            TRACK = 0x00D9E7F1     # RGB(241,231,218) 进度轨道（暖灰）
+            FILL = 0x003D8AFF      # RGB(255,138,61) 品牌橙
+            TITLE_C = 0x0020324E   # RGB(78,50,32) 标题深棕
+            SUB_C = 0x0066809B     # RGB(155,128,102) 说明暖灰
+            CLASS = 'CatDBLaunchSplash'
+            BAR_CLASS = 'CatDBProgressSplash'
+
+            brush = gdi32.CreateSolidBrush(WHITE)
+            brush_track = gdi32.CreateSolidBrush(TRACK)
+            brush_fill = gdi32.CreateSolidBrush(FILL)
+            null_pen = gdi32.GetStockObject(8)  # NULL_PEN
+            hinst = kernel32.GetModuleHandleW(None)
+
+            # 字体（按 DPI 缩放）
+            dc = user32.GetDC(None)
+            dpi = gdi32.GetDeviceCaps(dc, 88)  # LOGPIXELSX
+            user32.ReleaseDC(None, dc)
+            scale = max(1.0, dpi / 96.0)
+
+            def mkfont(px, weight):
+                return gdi32.CreateFontW(-int(px * scale), 0, 0, 0, weight, 0, 0, 0,
+                                         1, 0, 0, 5, 0, 'Microsoft YaHei UI')
+            font_title = mkfont(17, 700)
+            font_sub = mkfont(11, 400)
+
+            w, h = int(380 * scale), int(128 * scale)
+            x = (user32.GetSystemMetrics(0) - w) // 2
+            y = (user32.GetSystemMetrics(1) - h) // 3
+
+            state = self
+
+            @WNDPROC
+            def bar_proc(hwnd, msg, wp, lp):
+                """自绘圆角进度条：暖灰轨道 + 品牌橙填充（Real 高 DPI 平滑圆角）"""
+                if msg == 0x000F:  # WM_PAINT
+                    ps = _PAINTSTRUCT()
+                    hdc = user32.BeginPaint(hwnd, ctypes.byref(ps))
+                    try:
+                        rc = wt.RECT()
+                        user32.GetClientRect(hwnd, ctypes.byref(rc))
+                        bw, bh = rc.right - rc.left, rc.bottom - rc.top
+                        with state._lock:
+                            pct = state._percent
+                        gdi32.SelectObject(hdc, null_pen)
+                        gdi32.SelectObject(hdc, brush_track)
+                        gdi32.RoundRect(hdc, 0, 0, bw, bh, bh, bh)
+                        if pct > 0:
+                            fill_w = max(bh // 2, int(bw * pct / 100))
+                            saved = gdi32.SaveDC(hdc)
+                            gdi32.IntersectClipRect(hdc, 0, 0, fill_w, bh)
+                            gdi32.SelectObject(hdc, brush_fill)
+                            gdi32.RoundRect(hdc, 0, 0, bw, bh, bh, bh)
+                            gdi32.RestoreDC(hdc, saved)
+                    finally:
+                        user32.EndPaint(hwnd, ctypes.byref(ps))
+                    return 0
+                return user32.DefWindowProcW(hwnd, msg, wp, lp)
+
+            @WNDPROC
+            def wnd_proc(hwnd, msg, wp, lp):
+                if msg == 0x0010:  # WM_CLOSE
+                    user32.DestroyWindow(hwnd)
+                    return 0
+                if msg == 0x0002:  # WM_DESTROY
+                    with state._lock:
+                        state._hwnd = None
+                    user32.PostQuitMessage(0)
+                    return 0
+                if msg == 0x0084:  # WM_NCHITTEST：整窗可拖动
+                    return 2  # HTCAPTION
+                if msg == 0x0113:  # WM_TIMER（每 50ms 拉取最新进度）
+                    with state._lock:
+                        pct, txt = state._percent, state._text
+                    if state._bar:
+                        user32.InvalidateRect(state._bar, None, False)
+                    if state._label:
+                        user32.SetWindowTextW(state._label, txt)
+                    if state._pct_label:
+                        user32.SetWindowTextW(state._pct_label, f'{pct}%')
+                    return 0
+                if msg == 0x0138:  # WM_CTLCOLORSTATIC：文字配色
+                    hdc = wp
+                    child_hwnd = lp
+                    if child_hwnd == title:
+                        gdi32.SetTextColor(hdc, TITLE_C)
+                    else:
+                        gdi32.SetTextColor(hdc, SUB_C)
+                    gdi32.SetBkColor(hdc, WHITE)
+                    return brush
+                return user32.DefWindowProcW(hwnd, msg, wp, lp)
+
+            wc = _WNDCLASSEXW()
+            wc.cbSize = ctypes.sizeof(_WNDCLASSEXW)
+            wc.style = 0x00020000  # CS_DROPSHADOW（柔和投影）
+            wc.lpfnWndProc = wnd_proc
+            wc.cbClsExtra = 0
+            wc.cbWndExtra = 0
+            wc.hInstance = hinst
+            wc.hIcon = None
+            wc.hCursor = None
+            wc.hbrBackground = brush
+            wc.lpszMenuName = None
+            wc.lpszClassName = CLASS
+            wc.hIconSm = None
+            if not user32.RegisterClassExW(ctypes.byref(wc)):
+                return
+
+            bc = _WNDCLASSEXW()
+            bc.cbSize = ctypes.sizeof(_WNDCLASSEXW)
+            bc.style = 0
+            bc.lpfnWndProc = bar_proc
+            bc.cbClsExtra = 0
+            bc.cbWndExtra = 0
+            bc.hInstance = hinst
+            bc.hIcon = None
+            bc.hCursor = None
+            bc.hbrBackground = brush
+            bc.lpszMenuName = None
+            bc.lpszClassName = BAR_CLASS
+            bc.hIconSm = None
+            if not user32.RegisterClassExW(ctypes.byref(bc)):
+                return
+
+            hwnd = user32.CreateWindowExW(
+                0x00000008 | 0x00000080,  # WS_EX_TOPMOST | WS_EX_TOOLWINDOW
+                CLASS, '豆包喵喵 正在启动…',
+                0x80000000,  # WS_POPUP（无边框，投影由 CS_DROPSHADOW + DWM 圆角提供）
+                x, y, w, h, None, None, hinst, None)
+            if not hwnd:
+                return
+
+            # Win11 圆角
+            try:
+                dwm = ctypes.WinDLL('dwmapi')
+                corner = ctypes.c_int(2)  # DWMWCP_ROUND
+                dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))
+            except Exception:
+                pass
+
+            with state._lock:
+                state._hwnd = hwnd
+
+            # 标题 / 阶段说明 / 百分比 / 自绘进度条（简洁分区布局）
+            def child(cls, text, rect, font, style=0):
+                # rect = (left, top, right, bottom)；转为 CreateWindowExW 的 (x, y, cx, cy)
+                l, t, r, b = rect
+                hc = user32.CreateWindowExW(
+                    0, cls, text,
+                    0x40000000 | 0x10000000 | style,  # WS_CHILD | WS_VISIBLE | style
+                    l, t, r - l, b - t, hwnd, None, hinst, None)
+                if hc and font:
+                    user32.SendMessageW(hc, 0x0030, font, 1)  # WM_SETFONT
+                return hc
+
+            title = child('STATIC', '豆包喵喵',
+                          (int(26 * scale), int(18 * scale), w - int(26 * scale), int(52 * scale)),
+                          font_title)
+            label = child('STATIC', '正在启动…',
+                          (int(26 * scale), int(54 * scale), w - int(110 * scale), int(76 * scale)),
+                          font_sub)
+            pct_label = child('STATIC', '0%',
+                              (w - int(110 * scale), int(54 * scale), w - int(26 * scale), int(76 * scale)),
+                              font_sub, style=0x0002)  # SS_RIGHT
+            bar = child(BAR_CLASS, None,
+                        (int(26 * scale), int(92 * scale), w - int(26 * scale), int(92 * scale) + int(8 * scale)),
+                        None)
+
+            with state._lock:
+                state._label = label
+                state._pct_label = pct_label
+                state._bar = bar
+
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            user32.UpdateWindow(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.SetTimer(hwnd, 1, 50, None)
+            state._ready.set()
+
+            # 看门狗：最长 25s 强制关闭（防止主窗口 shown 事件缺失导致残留）
+            threading.Timer(25.0, state.close).start()
+
+            msg = wt.MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+        except Exception as e:
+            try:
+                logger.warning('启动进度条创建失败（不影响使用）: %s', e)
+            except Exception:
+                pass
+        finally:
+            self._ready.set()
+
+
+def splash_show():
+    """弹出启动进度条（幂等；非 Windows/失败时静默返回 False）"""
+    global _launch_splash
+    if _launch_splash is None:
+        _launch_splash = LaunchSplash()
+    return _launch_splash.show()
+
+
+def splash_set(percent, text=''):
+    if _launch_splash is not None:
+        _launch_splash.set(percent, text)
+
+
+def splash_close():
+    global _launch_splash
+    if _launch_splash is not None:
+        _launch_splash.close()
+        _launch_splash = None
+
+
+def _on_main_window_shown():
+    """主窗口真正显示：进度条到 100% 并关闭"""
+    splash_set(100, '启动完成')
+    splash_close()
+
+
+# ============== 单实例检测（防多开） ==============
+def _acquire_single_instance():
+    """Windows 命名互斥体防止多开：已有一个客户端运行时，
+    第二个实例弹窗提示「你已经开了一个客户端了」并退出。"""
+    global _SINGLE_INSTANCE_MUTEX
+    if platform.system() != 'Windows':
+        return True
+    try:
+        import ctypes
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        _SINGLE_INSTANCE_MUTEX = k32.CreateMutexW(None, False,
+                                                  'CatDB_Desktop_SingleInstance')
+        if not _SINGLE_INSTANCE_MUTEX:
+            return True
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            try:
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    '你已经开了一个客户端了。\n\n豆包喵喵已在运行，请勿重复启动。',
+                    '豆包喵喵', 0x40)  # MB_ICONINFORMATION
+            except Exception:
+                pass
+            return False
+        return True
+    except Exception:
+        return True  # 拿不到锁（非 Windows）时放行，避免锁机制导致无法启动
+
 
 # ============== GUI / 托盘双模式启动入口 ==============
 def run_gui_mode():
@@ -1425,8 +1881,14 @@ def run_gui_mode():
         logger.error('缺少 pywebview，无法启动桌面界面。请执行: pip install pywebview')
         return
 
+    # 启动进度条：双击后立即给出视觉反馈，主窗口真正显示后自动关闭
+    splash_show()
+    splash_set(5, '正在初始化…')
     ok, port = start_service_now()
-    if not ok:
+    if ok:
+        splash_set(28, '本地服务已就绪')
+    else:
+        splash_set(28, '本地服务未启动（可稍后手动启动）')
         logger.warning('后端服务未能自动启动，界面将以“未运行”状态打开（可手动点击启动）')
 
     # pywebview 加载本地文件：file:// URL，路径含空格/中文也安全
@@ -1437,8 +1899,10 @@ def run_gui_mode():
     except Exception:
         url = f'http://127.0.0.1:{CONFIG.get("port", 5000)}/desktop.html'
 
+    splash_set(45, '正在创建界面窗口…')
+    global _gui_window
     try:
-        webview.create_window(
+        _gui_window = webview.create_window(
             "豆包喵喵",
             url,
             width=960,
@@ -1455,12 +1919,33 @@ def run_gui_mode():
             webbrowser.open(f'http://127.0.0.1:{CONFIG.get("port", 5000)}/desktop.html')
         except Exception:
             pass
+        splash_close()
         run_tray_mode()
         return
 
+    splash_set(62, '界面窗口已创建')
+    # 主窗口真正显示时：进度条到 100% 并关闭启动画面
+    try:
+        _gui_window.events.shown += _on_main_window_shown
+    except Exception as e:
+        logger.warning('绑定主窗口 shown 事件失败（启动画面将由看门狗兜底关闭）: %s', e)
+
+    # 系统托盘 + 「关闭窗口 → 最小化到托盘」
+    # （托盘创建失败则保持原「关闭即退出」行为，避免窗口隐藏后无法恢复）
+    if create_tray_icon() and _gui_window is not None:
+        try:
+            _gui_window.events.closing += _on_gui_window_closing
+            logger.info('已启用：点关闭按钮将最小化到系统托盘')
+        except Exception as e:
+            logger.warning('绑定窗口关闭拦截失败，保持原退出行为: %s', e)
+
+    splash_set(88, '正在加载界面…')
+    logger.info('启动耗时：从进程启动到窗口就绪 %.0f ms',
+                (time.time() - _APP_START_TS) * 1000)
     try:
         webview.start(debug=False)
     finally:
+        splash_close()
         # 窗口关闭后停止后端，避免残留进程占端口
         if service_is_running():
             stop_service_now()
@@ -1468,6 +1953,9 @@ def run_gui_mode():
 
 def main():
     init_file_logging()
+    logger.info('启动阶段：模块导入耗时 %.0f ms', (time.time() - _APP_START_TS) * 1000)
+    if not _acquire_single_instance():
+        sys.exit(0)  # 已有一个客户端，弹窗提示后退出
     parse_args()
     load_persisted_prefs()
     minimized = CONFIG.get('minimized', False)

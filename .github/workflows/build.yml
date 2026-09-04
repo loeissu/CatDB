@@ -1,4 +1,4 @@
-name: Build and Release Win + Android
+name: Build and Release EXE
 
 on:
   push:
@@ -29,48 +29,5 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/CatDB.exe
           asset_name: CatDB_Windows_${{ github.ref_name }}.exe
-          tag: ${{ github.ref }}
-          overwrite: true
-
-  build-android:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-      - name: Sync Capacitor
-        run: |
-          npm install
-          npx cap sync android
-      - name: Build Release APK (stable keystore committed in repo)
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleRelease
-      - name: Prepare APK asset
-        run: |
-          ls -R android/app/build/outputs/apk/release/
-          cp $(ls android/app/build/outputs/apk/release/*.apk | head -n 1) CatDB_Android.apk
-          ls -lh CatDB_Android.apk
-      - name: Verify APK signed (must pass else uninstallable)
-        run: |
-          APK=CatDB_Android.apk
-          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls "$ANDROID_SDK_ROOT/build-tools/" || true
-          APKSIGNER=$(ls "$ANDROID_SDK_ROOT"/build-tools/*/apksigner | head -n 1)
-          echo "apksigner=$APKSIGNER"
-          "$APKSIGNER" verify --print-certs "$APK"
-      - name: Upload APK to Release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: CatDB_Android.apk
-          asset_name: CatDB_Android_${{ github.ref_name }}.apk
           tag: ${{ github.ref }}
           overwrite: true
