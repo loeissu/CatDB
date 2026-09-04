@@ -28,7 +28,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.10"
+__version__ = "2.2.12"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -79,6 +79,8 @@ synced_text = ""
 # 手机端实时输入预览：最新文本 + 时间戳（桌面 GUI 轮询展示，随时间过期自动消失）
 live_typing_text = ""
 live_typing_ts = 0.0
+_live_entry = None       # 当前输入会话对应的运行日志条目（LOG_BUFFER 内的 dict 引用）
+_live_start_ts = 0.0     # 当前输入会话开始时间
 main_loop = None
 typing_in_progress = False
 rebase_triggered = False  # 标记是否已触发增量模式，避免重复触发
@@ -652,13 +654,50 @@ async def broadcast_rebase():
         except: pass
 
 def update_live_typing(txt):
-    """手机端输入实时预览：记录最新文本与时间戳，桌面 GUI 轮询后同步显示"""
-    global live_typing_text, live_typing_ts
-    live_typing_text = txt or ''
-    live_typing_ts = time.time()
+    """手机端输入实时预览 + 写入运行日志：
+    - 新会话开始时在日志中落一条「正在输入」（记录开始时间）
+    - 会话期间实时更新该条内容（日志内刷新，不额外弹徽标）
+    - 结束（clear_live_typing）时固化为「输入完成 起→止：内容」，关闭客户端才消失"""
+    global live_typing_text, live_typing_ts, _live_entry, _live_start_ts
+    txt = txt or ''
+    now = time.time()
+    if txt and _live_entry is None:
+        # 新输入会话：写入日志（带开始时间戳）
+        _live_start_ts = now
+        entry = {'time': time.strftime('%H:%M:%S'), 'level': 'info',
+                 'msg': f'📱 正在输入：{txt}', '_live': True, '_start_ts': now}
+        with LOG_BUFFER_LOCK:
+            LOG_BUFFER.append(entry)
+        _live_entry = entry
+    elif txt and _live_entry is not None:
+        # 会话中：实时更新该条日志的内容（保留开始时间）
+        _live_entry['msg'] = f'📱 正在输入：{txt}'
+    live_typing_text = txt
+    live_typing_ts = now
+
 
 def clear_live_typing():
-    global live_typing_text, live_typing_ts
+    """结束当前输入会话：把日志中的「正在输入」固化为含起止时间与内容的完成记录"""
+    global live_typing_text, live_typing_ts, _live_entry, _live_start_ts
+    entry = _live_entry
+    if entry is not None:
+        start = time.strftime('%H:%M:%S', time.localtime(entry.get('_start_ts') or time.time()))
+        end = time.strftime('%H:%M:%S')
+        dur = ''
+        s = entry.get('_start_ts')
+        if s:
+            dur = f'（{max(0, int(time.time() - s))}s）'
+        txt = live_typing_text
+        with LOG_BUFFER_LOCK:
+            if entry in LOG_BUFFER:  # 若已被 400 条环形缓冲挤出则跳过
+                if txt:
+                    entry['msg'] = f'📱 输入完成 {start}→{end}{dur}：{txt}'
+                else:
+                    entry['msg'] = f'📱 输入完成 {start}→{end}{dur}'
+                entry.pop('_live', None)
+                entry.pop('_start_ts', None)
+    _live_entry = None
+    _live_start_ts = 0.0
     live_typing_text = ''
     live_typing_ts = 0.0
 

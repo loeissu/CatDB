@@ -267,22 +267,6 @@
     .logs .line.error { color: #FF6961; }
     .logs .line.error .l { color: #FF6961; }
 
-    /* 手机实时输入（集成在底部日志栏头部） */
-    .live-head {
-        display: none; align-items: center; gap: 7px;
-        font-family: var(--mono); font-size: 11.5px; color: #E8A33D;
-        min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-        margin-right: auto;
-    }
-    .live-head::before {
-        content: ""; width: 7px; height: 7px; border-radius: 50%;
-        background: var(--accent); flex-shrink: 0; animation: lbBlink 1s steps(1) infinite;
-    }
-    /* 空闲（手机已停止输入）：圆点停跳并转灰，但内容仍保留显示 */
-    .live-head.idle::before { animation: none; background: #C7A57F; opacity: .75; }
-    html[data-theme="dark"] .live-head.idle::before { background: #8E8E93; opacity: .6; }
-    @keyframes lbBlink { 50% { opacity: 0; } }
-
     /* 弹窗 */
     .overlay {
         position: fixed; inset: 0; background: rgba(0,0,0,.35);
@@ -376,7 +360,6 @@
     html[data-theme="dark"] .copy-btn { background: #2C2C31; border: 1px solid var(--hair); color: #F2F2F7; }
     html[data-theme="dark"] .copy-btn:hover { background: #38383D; }
     html[data-theme="dark"] .copy-btn.copied { background: var(--green); color: #fff; }
-    html[data-theme="dark"] .live-head { color: #FFB340; }
 </style>
 </head>
 <body>
@@ -386,7 +369,7 @@
     <div class="brand">
         <span class="logo">🐱</span>
         <span class="name">豆包喵喵</span>
-        <span class="ver" id="verTag">v2.2.0</span>
+        <span class="ver" id="verTag">v2.2.12</span>
     </div>
     <span class="state-pill" id="statePill"><span class="dot"></span><span id="stateText">正在连接…</span></span>
     <div class="meta">
@@ -487,7 +470,6 @@
     <div class="loghead">
         <span class="lt">运行日志</span>
         <span class="sp"></span>
-        <span class="live-head" id="liveTxt"></span>
         <button class="clear-btn" id="logToggle" title="展开 / 收起日志">收起</button>
         <button class="clear-btn" id="clearLogsBtn">清空</button>
     </div>
@@ -580,7 +562,7 @@ async function postAction(body) {
 
 /* ---------- 状态 ---------- */
 let S = { running: false, port: 0, ip: '', ips: [], touchpad_enabled: true, hotkey: 'f9',
-          auto_start: false, version: '2.2.0', live_typing: '', live_typing_ts: 0 };
+          auto_start: false, version: '2.2.12', live_typing: '', live_typing_ts: 0 };
 let curIP = '';
 let toastTimer = null;
 let qrTimer = null;
@@ -602,7 +584,7 @@ function renderStatus() {
     $('stateText').textContent = on ? `服务运行中 · ${S.port}` : '服务未启动';
     $('topIp').textContent = S.ip || '—';
     $('topPort').textContent = on ? String(S.port) : '—';
-    $('verTag').textContent = 'v' + (S.version || '2.2.0');
+    $('verTag').textContent = 'v' + (S.version || '2.2.12');
     const btn = $('powerBtn');
     btn.textContent = on ? '停止服务' : '启动服务';
     btn.classList.toggle('stop', on);
@@ -614,29 +596,10 @@ function renderStatus() {
     $('hkCurrent').textContent = (S.hotkey || 'f9').toUpperCase();
     try { $('hkSelect').value = S.hotkey || 'f9'; } catch (e) {}
     $('autostartChk').checked = !!S.auto_start;
-    renderLive();
 }
 
-/* 手机实时输入：显示在底部日志栏头部，输入时实时刷新；
-   停止输入后内容保留不消失（仅退出客户端才清除）。 */
-let lastLiveTxt = '';
-function renderLive() {
-    const el = $('liveTxt');
-    const txt = (S.live_typing || '').trim();
-    // 约 3 秒内有新输入视为“正在输入”，之后转“最近输入”但内容保留
-    const active = !!txt && (Date.now() / 1000 - (S.live_typing_ts || 0)) < 3;
-    if (txt) lastLiveTxt = txt;
-    if (!lastLiveTxt) { // 本次运行从未收到过输入
-        el.style.display = 'none';
-        el.textContent = '';
-        el.classList.remove('idle');
-        return;
-    }
-    el.style.display = 'inline-flex';
-    el.classList.toggle('idle', !active);
-    el.textContent = (active ? '📱 正在输入：' : '📱 最近输入：') + lastLiveTxt;
-}
-
+/* 手机实时输入：由服务端写入运行日志（开始时间 + 实时内容 + 完成时起止时间），
+   日志面板直接展示，关闭客户端才消失，不再单独显示顶部闪烁徽标。 */
 function renderAddr(on) {
     $('addrSheet').style.display = on ? 'block' : 'none';
     if (!on) return;
