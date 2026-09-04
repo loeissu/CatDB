@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.9] - 2026-09-04
+
+### Fixed（冷启动状态栏修复）
+- **冷启动状态栏设置可能静默失效**：CatDBStatusBar.applyForSystemTheme 原先经由 getActivity()（bridge 获取）取窗口，在 MainActivity.onCreate 早期 bridge 尚未就绪时会返回 null 导致设置被跳过。改为直接使用传入的 Activity，冷启动按系统夜间模式正确设置状态栏图标明暗与背景色（styles.xml 之外的保险）；顺带清理未使用 import
+- 版本号统一升至 2.2.9（versionCode 11）
+
 ## [2.2.8] - 2026-09-04
 
 ### Fixed（状态栏原生直控 + 图标矢量重绘 + PWA 主题色）

@@ -2,7 +2,6 @@ package com.loeissu.catdb;
 
 import android.app.Activity;
 import android.content.res.Configuration;
-import android.graphics.Color;
 import android.view.View;
 import android.view.Window;
 
@@ -35,7 +34,7 @@ public class CatDBStatusBar extends Plugin {
             call.reject("dark is required");
             return;
         }
-        applyStatusBar(dark.booleanValue());
+        applyStatusBar(getActivity(), dark.booleanValue());
         call.resolve(new JSObject().put("ok", true));
     }
 
@@ -47,11 +46,11 @@ public class CatDBStatusBar extends Plugin {
         int mode = activity.getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK;
         boolean dark = (mode == Configuration.UI_MODE_NIGHT_YES);
-        applyStatusBar(dark);
+        // 直接使用传入的 activity（此时 bridge 可能尚未就绪，getActivity() 会返回 null）
+        applyStatusBar(activity, dark);
     }
 
-    private void applyStatusBar(boolean dark) {
-        Activity activity = getActivity();
+    private void applyStatusBar(Activity activity, boolean dark) {
         if (activity == null || activity.isFinishing()) {
             return;
         }
