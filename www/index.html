@@ -1245,9 +1245,45 @@
         const $ = id => document.getElementById(id);
         const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
-        /* ---------- 深浅色主题（浅 / 深 / 跟随系统）+ 状态栏同步 ---------- */
+        /* ---------- 深浅色主题（浅 / 深 / 跟随系统）+ 状态栏即时同步 ----------
+         * 切换主题后状态栏（底色+图标明暗）无需重启立即生效：
+         * 1) CSS 变量与 data-theme 即时切换页面；
+         * 2) 原生 CatDBStatusBar 插件（WindowInsetsControllerCompat 直控，Android 15 可靠）
+         *    作为首选同步通道，调用失败静默降级；
+         * 3) 官方 StatusBar 插件始终作为第二通道兜底（两通道目标值相同，幂等）；
+         * 4) 部分机型窗口/insets 就绪较晚，主题变更后再补几次同步（幂等）。
+         */
         const themeSel = $('themeSel');
         const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+        // 原生状态栏同步：首选 CatDBStatusBar，兜底官方 StatusBar。
+        // 注意官方 StatusBar 的 style 语义：DARK=浅色图标（深底用），LIGHT=深色图标（浅底用）。
+        function syncNativeStatusBar(dark) {
+            if (!isNative) return;
+            try {
+                const cap = window.Capacitor;
+                let sb2 = cap && cap.Plugins && cap.Plugins.CatDBStatusBar;
+                if (!sb2 && cap && cap.registerPlugin) {
+                    try { sb2 = cap.registerPlugin('CatDBStatusBar'); } catch (e) { sb2 = null; }
+                }
+                if (sb2 && sb2.setTheme) {
+                    try {
+                        const p = sb2.setTheme({ dark: !!dark });
+                        if (p && p.catch) p.catch(() => {});
+                    } catch (e) {}
+                }
+                // 第二通道（即使上面成功也执行：两通道写入同一目标值，幂等安全）
+                const SB = cap && cap.Plugins && cap.Plugins.StatusBar;
+                if (SB) {
+                    try {
+                        if (SB.setOverlaysWebView) SB.setOverlaysWebView({ overlay: false });
+                        if (SB.setBackgroundColor) SB.setBackgroundColor({ color: dark ? '#14100D' : '#F9F5F0' });
+                        if (SB.setStyle) SB.setStyle({ style: dark ? 'DARK' : 'LIGHT' });
+                    } catch (e) {}
+                }
+            } catch (e) {}
+        }
+
         function applyTheme() {
             let pref = localStorage.getItem('theme');
             if (pref !== 'light' && pref !== 'dark') pref = 'auto';
@@ -1256,37 +1292,23 @@
             // CHANGED: 动态更新 theme-color（PWA/浏览器全屏时状态栏颜色随主题：浅色=米底，深色=深底）
             const metaTc = document.querySelector('meta[name="theme-color"]');
             if (metaTc) metaTc.setAttribute('content', dark ? '#14100D' : '#F9F5F0');
-            // 原生状态栏随主题：浅色=米色底+深色图标；深色=深底+浅图标。
-            // 仅在真正的原生 App 里调用（浏览器无原生桥，避免误调）；插件由 vendor 脚本注册。
-            if (!isNative) return;
-            try {
-                const cap = window.Capacitor;
-                // 首选：原生 CatDBStatusBar 插件（WindowInsetsControllerCompat 直控，Android 15 可靠）
-                let sb2 = cap && cap.Plugins && cap.Plugins.CatDBStatusBar;
-                if (!sb2 && cap && cap.registerPlugin) {
-                    sb2 = cap.registerPlugin('CatDBStatusBar'); // 原生端已注册，获取代理
-                }
-                if (sb2 && sb2.setTheme) {
-                    sb2.setTheme({ dark: !!dark });
-                    return;
-                }
-                // 兜底：官方 StatusBar 插件
-                const SB = cap && cap.Plugins && cap.Plugins.StatusBar;
-                if (SB) {
-                    if (SB.setOverlaysWebView) SB.setOverlaysWebView({ overlay: false });
-                    if (SB.setBackgroundColor) SB.setBackgroundColor({ color: dark ? '#14100D' : '#F9F5F0' });
-                    if (SB.setStyle) SB.setStyle({ style: dark ? 'LIGHT' : 'DARK' });
-                }
-            } catch (e) {}
+            syncNativeStatusBar(dark);
+            // 窗口/insets 就绪较晚的设备：紧随其后补几次同步（幂等，无副作用）
+            if (isNative) {
+                setTimeout(() => syncNativeStatusBar(dark), 60);
+                setTimeout(() => syncNativeStatusBar(dark), 350);
+            }
         }
         themeSel.value = (localStorage.getItem('theme') === 'light' || localStorage.getItem('theme') === 'dark')
             ? localStorage.getItem('theme') : 'auto';
         themeSel.addEventListener('change', () => { localStorage.setItem('theme', themeSel.value); applyTheme(); });
         if (mq) mq.addEventListener('change', () => { if ((localStorage.getItem('theme') || 'auto') === 'auto') applyTheme(); });
         applyTheme();
-        // 状态栏可能在页面完全加载/回到前台时才稳定，多个时机重复同步（幂等，无副作用）
+        // 状态栏可能在页面完全加载/回到前台/系统深浅切换后才稳定，多个时机重复同步（幂等，无副作用）
         document.addEventListener('DOMContentLoaded', applyTheme);
         window.addEventListener('load', applyTheme);
+        window.addEventListener('pageshow', applyTheme);
+        window.addEventListener('focus', applyTheme);
         document.addEventListener('visibilitychange', () => { if (!document.hidden) applyTheme(); });
         /* ---------- 图片/拍照发送到电脑：点小猫头像=选图；右下角📷=拍照 ---------- */
 

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- ============================================================
+       「Typing」安卓启动器图标 · 正式稿（方案 B 奶油底深棕字）
+       1024 主画布 · legacy 圆角底整图
+       生成器：tools/gen_typing_icons.py（PIL，仓库内 PNG 以此为准）
+       本 SVG 为可编辑矢量母稿 / 设计规范参照
+       ============================================================ -->
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#FFFFFF"/>
+      <stop offset="0.5" stop-color="#FFF9F0"/>
+      <stop offset="1"   stop-color="#F7EAD8"/>
+    </linearGradient>
+    <linearGradient id="inkGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#6D4A33"/>
+      <stop offset="1"   stop-color="#4E3220"/>
+    </linearGradient>
+    <radialGradient id="topLight" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bottomVig" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#966C46" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#966C46" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blurShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feGaussianBlur stdDeviation="20" result="b"/>
+    </filter>
+    <filter id="blurLight" x="-40%" y="-80%" width="180%" height="260%">
+      <feGaussianBlur stdDeviation="100"/>
+    </filter>
+    <filter id="blurVig" x="-30%" y="40%" width="160%" height="120%">
+      <feGaussianBlur stdDeviation="110"/>
+    </filter>
+  </defs>
+
+  <!-- 圆角奶油底 -->
+  <g>
+    <rect x="46" y="46" width="932" height="932" rx="208" fill="url(#bgGrad)"/>
+    <!-- 细描边 -->
+    <rect x="52" y="52" width="920" height="920" rx="202" fill="none"
+          stroke="#C49C74" stroke-opacity="0.27" stroke-width="3"/>
+    <!-- 顶部主光源柔光 -->
+    <ellipse cx="512" cy="60" rx="560" ry="430" fill="url(#topLight)" filter="url(#blurLight)"/>
+    <!-- 底部暖色暗角 -->
+    <ellipse cx="512" cy="1100" rx="700" ry="520" fill="url(#bottomVig)" filter="url(#blurVig)"/>
+  </g>
+
+  <!-- 字组：阴影 + 主字（整体视觉居中，字心约 y≈480） -->
+  <g text-anchor="middle" font-family="Arial, 'Helvetica Neue', 'Microsoft YaHei', sans-serif"
+     font-weight="700" font-size="330">
+    <!-- 软投影（下移 + 高斯模糊） -->
+    <text x="512" y="640" fill="#5A3C28" opacity="0.34" filter="url(#blurShadow)">Typing</text>
+    <text x="512" y="628" fill="url(#inkGrad)">Typing</text>
+  </g>
+
+  <!-- 橙色手绘笔触（呼应 Windows 猫图标中的橙色） -->
+  <path d="M 315 768 Q 480 752 646 768 Q 700 774 712 762"
+        fill="none" stroke="#FF8A3D" stroke-width="21" stroke-linecap="round"
+        opacity="0.95"/>
+  <path d="M 330 778 Q 500 760 664 778"
+        fill="none" stroke="#FF9E55" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
+</svg>

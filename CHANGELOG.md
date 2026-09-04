@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.11] - 2026-09-04
+
+### Changed（启动器图标正式设计 + 状态栏主题即时生效）
+- **启动器图标正式设计（替换 v2.2.10 橙色占位）**：采用与 Windows 桌面端/网页同体系的米白奶油渐变底（#FFFFFF→#FFF9F0→#F7EAD8，顶部主光源柔光 + 底部暖色暗角 + 细描边），居中深棕渐变粗体「Typing」（软投影 + 纵向渐变填充），下方橙色手绘笔触点缀——以「白纸 + 深棕字 + 橙笔」的排版意象呈现，48px 起各尺寸清晰可辨
+- **全套图标按新设计重生成**：legacy（48/72/96/144/192）与 round 同母版，自适应前景收敛进 66% 安全区，自适应背景改纯奶油色 #FFF9F0（ic_launcher_background.xml 同步）
+- **生成器统一为正式稿管道**：tools/gen_typing_icons.py 重构为方案 B 正式稿生成器（唯一权威入口）；新增矢量母稿 typing_icon.svg；generate_icons.js 不再各自渲染，统一委托 Python 生成器，任何入口重跑结果一致；cat_icon.svg / www/cat_icon.svg 保留（网页/PWA 猫图标仍引用）
+- **状态栏随深浅主题即时生效（不再需要重启）**：JS 切换主题时同步通道双保险——首选原生 CatDBStatusBar 插件（WindowInsetsControllerCompat 直控），官方 StatusBar 插件始终作为第二通道兜底；修复兜底 setStyle 明暗映射反了的问题（深色主题应为浅色图标 style=DARK），并修复 Capacitor 配置里启动默认 style 与浅色底色不匹配（DARK→LIGHT）
+- **原生层补强**：CatDBStatusBar 增加主线程强制、窗口未附加自动重试、lastDark 记录用户实际生效主题；MainActivity 在 onResume 与系统 uiMode 切换（onConfigurationChanged）时重放主题，回到前台/系统深浅切换后状态栏始终与页面一致，与 JS visibilitychange 幂等互补
+- 版本号统一升至 2.2.11（versionCode 13）
+
 ## [2.2.10] - 2026-09-04
 
 ### Fixed（闪退加固 + 固定签名 + 文字图标占位）

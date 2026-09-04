@@ -1,5 +1,6 @@
 package com.loeissu.catdb;
 
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.util.Log;
 
@@ -21,7 +22,7 @@ public class MainActivity extends BridgeActivity {
                 @Override
                 public void run() {
                     try {
-                        new CatDBStatusBar().applyForSystemTheme(MainActivity.this);
+                        CatDBStatusBar.applyForSystemTheme(MainActivity.this);
                     } catch (Throwable t) {
                         Log.w(TAG, "applyForSystemTheme failed: " + t);
                     }
@@ -29,6 +30,48 @@ public class MainActivity extends BridgeActivity {
             });
         } catch (Throwable t) {
             Log.w(TAG, "decorView post failed: " + t);
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // 回到前台：重放「用户最近一次主题」（未设置过则跟随系统），
+        // 与 JS visibilitychange 的同步幂等互补，保证状态栏始终与页面一致。
+        try {
+            getWindow().getDecorView().post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        CatDBStatusBar.applyLastOrSystemTheme(MainActivity.this);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "resume statusbar failed: " + t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Log.w(TAG, "resume decor post failed: " + t);
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // 系统深浅色切换（uiMode 已声明在 manifest configChanges，Activity 不重建）：
+        // 稍后重放用户主题（或系统主题）。JS 的 matchMedia 若同步了则两者幂等一致。
+        try {
+            getWindow().getDecorView().postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        CatDBStatusBar.applyLastOrSystemTheme(MainActivity.this);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "config statusbar failed: " + t);
+                    }
+                }
+            }, 150);
+        } catch (Throwable t) {
+            Log.w(TAG, "config decor post failed: " + t);
         }
     }
 }
