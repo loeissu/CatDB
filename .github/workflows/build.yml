@@ -47,7 +47,7 @@ jobs:
         run: |
           npm install
           npx cap sync android
-      - name: Build Release APK (with debug sign for CI)
+      - name: Build Release APK (stable keystore committed in repo)
         run: |
           cd android
           chmod +x gradlew

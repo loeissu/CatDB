@@ -7,8 +7,8 @@ android {
         applicationId "com.loeissu.catdb"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 11
-        versionName "2.2.9"
+        versionCode 12
+        versionName "2.2.10"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +16,19 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            // 固定发布签名（android/catdb-release.jks 已入库，与 CI 共用同一文件）：
+            // 各版本签名一致，安装后可被后续版本直接覆盖更新，无需卸载重装。
+            storeFile file('../catdb-release.jks')
+            storePassword 'CatdbRelease2018'
+            keyAlias 'catdb'
+            keyPassword 'CatdbRelease2018'
+        }
+    }
     buildTypes {
         release {
-            // CI installable: sign release with debug key, otherwise assembleRelease is unsigned
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
