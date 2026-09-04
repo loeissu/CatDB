@@ -64,7 +64,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.2.14"
+__version__ = "2.2.15"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -1270,11 +1270,27 @@ FIREWALL_RULE_NAME = 'CatDB Desktop (5000-5010)'
 
 
 def _run_netsh(args):
-    """运行 netsh 并安全解码中文 GBK 输出"""
-    return subprocess.run(
+    """运行 netsh 并安全解码中文输出（自适应 UTF-8 / GBK）
+
+    注意：不同系统上 netsh 输出编码不同。部分系统（开启「Beta: 使用
+    Unicode UTF-8 提供全球语言支持」）netsh 输出 UTF-8，其余输出 GBK。
+    固定用 GBK 解码 UTF-8 输出会产生乱码（璇锋眰...），且会导致
+    firewall_rule_exists() 匹配不到「规则名称」而每次都误判未放行。
+    这里先尝试 UTF-8 严格解码，失败再回退 GBK。"""
+    r = subprocess.run(
         args, capture_output=True, timeout=15,
-        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-        encoding='gbk', errors='replace')
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    for enc in ('utf-8', 'gbk'):
+        try:
+            r.stdout = r.stdout.decode(enc)
+            r.stderr = r.stderr.decode(enc)
+            return r
+        except UnicodeDecodeError:
+            pass
+    # 理论上到不了这里（GBK 几乎能解码任意字节）；仅作兜底
+    r.stdout = r.stdout.decode('gbk', errors='replace')
+    r.stderr = r.stderr.decode('gbk', errors='replace')
+    return r
 
 
 def firewall_rule_exists():
