@@ -1,16 +1,10 @@
 {
   "name": "catdb",
-  "version": "2.2.15",
-  "description": "CatDB - 手机语音输入 → 电脑实时上屏",
-  "main": "index.js",
+  "version": "2.3.0",
+  "private": true,
+  "description": "豆包喵喵 - 手机浏览器语音输入 → Windows 电脑实时上屏（无原生客户端）",
   "scripts": {
-    "build": "echo 'Static web app, no build needed'"
-  },
-  "dependencies": {
-    "@capacitor/android": "^6.0.0",
-    "@capacitor/cli": "^6.0.0",
-    "@capacitor/core": "^6.0.0",
-    "@capacitor/status-bar": "^6.0.3"
+    "test": "python -m unittest discover -s tests -v"
   },
   "author": "loeissu",
   "license": "MIT"

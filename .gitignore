@@ -220,11 +220,6 @@ releases/
 dist/
 build/
 
-# Android build
-android/.gradle/
-android/app/build/
-android/build/
-
-# www 前端源码需要提交（供 PyInstaller datas + Capacitor 同步）
-# 仅忽略系统生成文件，保留桌面/移动端页面
+# www 前端源码需要提交（供 PyInstaller datas 打包）
+# 仅忽略系统生成文件，保留桌面端与手机浏览器页面
 # www/

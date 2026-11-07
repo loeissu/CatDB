@@ -7,13 +7,11 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#F9F5F0">
     <title>豆包喵喵</title>
-    <!-- Capacitor 运行时（原生桥）与状态栏插件代理：无打包环境的纯 HTML 也要能调原生状态栏 -->
-    <script src="vendor/capacitor.js"></script>
-    <script src="vendor/status-bar.js"></script>
+    <!-- v2.3.0 起仅支持手机浏览器 / PWA，不再加载 Capacitor 原生桥 -->
     <!-- 移除 Google Fonts 硬依赖，改用系统字体栈 -->
     <style>
         :root {
-            --bg-color: #F9F5F0  /* 与安卓状态栏颜色一致，视觉无缝 */;
+            --bg-color: #F9F5F0  /* 与浏览器 UI / PWA 主题色一致，视觉无缝 */;
             --card-bg: #FFFFFF;
             --text-main: #5D4037;
             --text-light: #8D6E63;
@@ -588,7 +586,8 @@
                 <button class="hk-add-btn" id="serverConnectBtn" style="flex-shrink:0;">连接</button>
             </div>
             <div style="font-size:11px; color:#BCAAA4; margin:-8px 0 12px;">
-                💡 手机浏览器打开电脑页面时自动连接，无需填写。<br>安卓 App 需手动填入电脑 IP（在电脑端窗口右上角查看）。
+                💡 用桌面端二维码扫码、或打开「复制」得到的完整地址时会自动连接，无需填写。<br>
+                手动填写时请粘贴<b>完整地址</b>（含连接码），单独填 IP 会被服务端拒绝。
             </div>
             <div class="setting-row">
                 <span>发送延迟 (ms)</span>
@@ -717,10 +716,9 @@
         });
         loadSettings();
 
-        // ===== 电脑地址解析：原生 App(Capacitor localhost) 需手动填写；
-        // 手机浏览器直接打开电脑页面(http://ip:port)时自动使用 location.host =====
+        // ===== 电脑地址解析：手机浏览器直接打开电脑页面时自动使用 location.host =====
+        // 也支持粘贴桌面端「复制」得到的完整地址 http://ip:port/?k=连接码
         const serverAddrInput = document.getElementById('serverAddr');
-        const isNativeApp = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
         function normalizeAddr(raw) {
             raw = (raw || '').trim().replace(/^wss?:\/\//i, '').replace(/^https?:\/\//i, '').replace(/\/$/g, '');
@@ -731,6 +729,29 @@
             return m && m[2] ? host + ':' + m[2] : host;
         }
         function savedServerAddr() { return normalizeAddr(localStorage.getItem('serverAddr')); }
+        // 连接码：URL 上的 ?k= 优先（扫码/点链接进入），否则用上次保存的
+        function connectionKey() {
+            let k = '';
+            try {
+                const m = location.search.match(/[?&]k=([^&]+)/);
+                if (m) { k = decodeURIComponent(m[1]); localStorage.setItem('connKey', k); }
+                else { k = localStorage.getItem('connKey') || ''; }
+            } catch (e) {}
+            return k;
+        }
+        // 允许粘贴完整地址；顺带把其中的连接码存下来，避免用户手抄
+        function parseAddr(raw) {
+            raw = (raw || '').trim();
+            if (!raw) return { addr: '', key: '' };
+            try {
+                const full = /^[a-z]+:\/\//i.test(raw)
+                    ? raw.replace(/^wss?:\/\//i, 'http://') : 'http://' + raw;
+                const u = new URL(full);
+                return { addr: u.host, key: u.searchParams.get('k') || '' };
+            } catch (e) {
+                return { addr: normalizeAddr(raw), key: '' };
+            }
+        }
         function detectedServerAddr() {
             const h = location.hostname || '';
             if (!h || h === 'localhost' || h === '127.0.0.1') return ''; // 原生 App / 本地文件 → 无法自动推导
@@ -739,8 +760,9 @@
         function currentTarget() { return savedServerAddr() || detectedServerAddr(); }
 
         function saveServerAddrAndConnect() {
-            const addr = normalizeAddr(serverAddrInput.value);
-            if (addr) { localStorage.setItem('serverAddr', addr); serverAddrInput.value = addr; }
+            const p = parseAddr(serverAddrInput.value);
+            if (p.key) { try { localStorage.setItem('connKey', p.key); } catch (e) {} }
+            if (p.addr) { localStorage.setItem('serverAddr', p.addr); serverAddrInput.value = p.addr; }
             else { localStorage.removeItem('serverAddr'); }
             if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; }
             connect();
@@ -751,8 +773,9 @@
         serverAddrInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveServerAddrAndConnect(); });
         // 用户编辑完地址（失焦）即持久化；只有手动输入才会触发，绝不会被程序自动改写
         serverAddrInput.addEventListener('change', () => {
-            const addr = normalizeAddr(serverAddrInput.value);
-            if (addr) { localStorage.setItem('serverAddr', addr); serverAddrInput.value = addr; }
+            const p = parseAddr(serverAddrInput.value);
+            if (p.key) { try { localStorage.setItem('connKey', p.key); } catch (e) {} }
+            if (p.addr) { localStorage.setItem('serverAddr', p.addr); serverAddrInput.value = p.addr; }
             else { localStorage.removeItem('serverAddr'); }
         });
         // 未连接时点击状态徽标快速去设置地址
@@ -792,15 +815,24 @@
                 return; // 无地址时静默等待用户输入，不做无效重连
             }
             if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-            ws = new WebSocket(`ws://${target}/ws`);
+            const k = connectionKey();
+            ws = new WebSocket(`ws://${target}/ws?k=${encodeURIComponent(k)}`);
             ws.onopen = () => {
                 retryN = 0;
                 status.textContent = '已连接'; status.className = 'status-badge connected';
                 try { ws.send(JSON.stringify({ type: 'config', detectKeyboard: detectKeyboardInput.checked })); } catch (e) {}
                 hbStart();
             };
-            ws.onclose = () => {
+            ws.onclose = (e) => {
                 hbStop();
+                if (e && e.code === 4401) {
+                    // 连接码无效：无限重连没有意义，直接引导用户扫码/粘贴完整地址
+                    status.textContent = '连接码无效';
+                    status.className = 'status-badge disconnected';
+                    status.title = '请扫桌面端二维码，或在设置里粘贴桌面端复制的完整地址';
+                    openModal('settingsModal');
+                    return;
+                }
                 status.textContent = '断开重连中'; status.className = 'status-badge disconnected';
                 scheduleReconnect();
             };
@@ -813,7 +845,7 @@
                 else if(data.type === 'clear_with_blur') performClearWithBlur();
                 else if(data.type === 'rebase') {
                     ignoreLength = input.value.length; lastSentText = ''; status.textContent = '电脑介入';
-                    setTimeout(() => { if(ws.readyState===1) status.textContent='已连接'; }, 2000);
+                    setTimeout(() => { if(ws && ws.readyState===1) status.textContent='已连接'; }, 2000);
                 }
             };
         }
@@ -838,7 +870,7 @@
             if (typingIdleTimer) clearTimeout(typingIdleTimer);
             typingIdleTimer = setTimeout(stopTypingAnim, 900);
             // 输入法换行：视为发送，同步到电脑回车后立即清空手机输入框
-            if (input.value.includes('\\n')) {
+            if (input.value.includes('\n')) {
                 stopTypingAnim();
                 performClear();
                 return;
@@ -1227,71 +1259,28 @@
         };
     </script>
     <script>
-    // ================= v2.2.3 功能增强（主题/扫码/图片发送） =================
+    // ============ 深浅色主题 + 图片发送（v2.3.0：仅手机浏览器 / PWA） ============
     (function () {
         const $ = id => document.getElementById(id);
-        const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
-        /* ---------- 深浅色主题（浅 / 深 / 跟随系统）+ 状态栏即时同步 ----------
-         * 切换主题后状态栏（底色+图标明暗）无需重启立即生效：
-         * 1) CSS 变量与 data-theme 即时切换页面；
-         * 2) 原生 CatDBStatusBar 插件（WindowInsetsControllerCompat 直控，Android 15 可靠）
-         *    作为首选同步通道，调用失败静默降级；
-         * 3) 官方 StatusBar 插件始终作为第二通道兜底（两通道目标值相同，幂等）；
-         * 4) 部分机型窗口/insets 就绪较晚，主题变更后再补几次同步（幂等）。
-         */
+        /* 主题：浅 / 深 / 跟随系统。原生客户端下线后不再需要状态栏插件桥，
+           theme-color 同步保留，浏览器 / PWA 全屏时 UI 配色仍跟随主题。 */
         const themeSel = $('themeSel');
         const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-
-        // 原生状态栏同步：首选 CatDBStatusBar，兜底官方 StatusBar。
-        // 注意官方 StatusBar 的 style 语义：DARK=浅色图标（深底用），LIGHT=深色图标（浅底用）。
-        function syncNativeStatusBar(dark) {
-            if (!isNative) return;
-            try {
-                const cap = window.Capacitor;
-                let sb2 = cap && cap.Plugins && cap.Plugins.CatDBStatusBar;
-                if (!sb2 && cap && cap.registerPlugin) {
-                    try { sb2 = cap.registerPlugin('CatDBStatusBar'); } catch (e) { sb2 = null; }
-                }
-                if (sb2 && sb2.setTheme) {
-                    try {
-                        const p = sb2.setTheme({ dark: !!dark });
-                        if (p && p.catch) p.catch(() => {});
-                    } catch (e) {}
-                }
-                // 第二通道（即使上面成功也执行：两通道写入同一目标值，幂等安全）
-                const SB = cap && cap.Plugins && cap.Plugins.StatusBar;
-                if (SB) {
-                    try {
-                        if (SB.setOverlaysWebView) SB.setOverlaysWebView({ overlay: false });
-                        if (SB.setBackgroundColor) SB.setBackgroundColor({ color: dark ? '#14100D' : '#F9F5F0' });
-                        if (SB.setStyle) SB.setStyle({ style: dark ? 'DARK' : 'LIGHT' });
-                    } catch (e) {}
-                }
-            } catch (e) {}
-        }
 
         function applyTheme() {
             let pref = localStorage.getItem('theme');
             if (pref !== 'light' && pref !== 'dark') pref = 'auto';
             const dark = pref === 'dark' || (pref === 'auto' && mq && mq.matches);
             document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-            // CHANGED: 动态更新 theme-color（PWA/浏览器全屏时状态栏颜色随主题：浅色=米底，深色=深底）
             const metaTc = document.querySelector('meta[name="theme-color"]');
             if (metaTc) metaTc.setAttribute('content', dark ? '#14100D' : '#F9F5F0');
-            syncNativeStatusBar(dark);
-            // 窗口/insets 就绪较晚的设备：紧随其后补几次同步（幂等，无副作用）
-            if (isNative) {
-                setTimeout(() => syncNativeStatusBar(dark), 60);
-                setTimeout(() => syncNativeStatusBar(dark), 350);
-            }
         }
         themeSel.value = (localStorage.getItem('theme') === 'light' || localStorage.getItem('theme') === 'dark')
             ? localStorage.getItem('theme') : 'auto';
         themeSel.addEventListener('change', () => { localStorage.setItem('theme', themeSel.value); applyTheme(); });
         if (mq) mq.addEventListener('change', () => { if ((localStorage.getItem('theme') || 'auto') === 'auto') applyTheme(); });
         applyTheme();
-        // 状态栏可能在页面完全加载/回到前台/系统深浅切换后才稳定，多个时机重复同步（幂等，无副作用）
         document.addEventListener('DOMContentLoaded', applyTheme);
         window.addEventListener('load', applyTheme);
         window.addEventListener('pageshow', applyTheme);
