@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.1] - 2026-11-08
+
+### Fixed
+- **修复 v2.3.0 运行时拖慢系统鼠标（迟滞 / 长拖影）**：
+  - 根因 1：`setup_hotkey()` 用 `pynput.mouse.Listener` 安装 `WH_MOUSE_LL` 全局低级鼠标钩子，进程存活期间每一个系统鼠标消息（含高回报率鼠标的每次 MOVE）都要穿过 Python 回调；该线程被阻塞时 Windows 会延迟整条输入链。改为 `GetAsyncKeyState(VK_LBUTTON)` 25ms 轮询，完全不进入消息链。
+  - 根因 2：v2.3.0 新增的 `_text_lock` 被加进 `reset_synced_text()`，而该函数由钩子回调直接调用；同时 `apply_text_diff()` 会在持有同一把锁的情况下执行 `type_text()` / `send_backspaces()`（内含 `time.sleep()` 与 `pyautogui` 注入输入）。注入的按键又会回灌键盘钩子，形成钩子线程等锁、上屏线程等输入回执的互等，系统鼠标键盘出现迟滞与拖影。
+  - 修复：钩子回调只做 O(1) 的事件投递（`_enqueue_input`），所有加锁、日志、广播、上屏判断统一在 `catdb-input-events` 工作线程执行；工作线程用 `_text_lock.acquire(blocking=False)` 过滤上屏期间的程序注入按键，保持 Smart Rebase 语义不变。
+- 非 Windows 平台不再安装任何全局鼠标钩子（开发调试用途）。
+
+### Test
+- 新增 4 条输入链路隔离回归用例：禁止 `mouse.Listener`、钩子回调禁止阻塞操作、阻塞逻辑必须在工作线程、轮询必须无钩子且只取按下沿。测试总数 31 → 35。
+
 ## [2.3.0] - 2026-11-07
 
 ### 移除

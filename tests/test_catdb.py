@@ -383,5 +383,43 @@ class TestFrontend(CatDBTestCase):
         self.assertIn("name=\"theme-color\"", html)  # PWA 主题仍保留
 
 
+# ==========================================================================
+# 五、输入链路隔离（v2.3.1：修复全局鼠标钩子拖慢系统鼠标）
+# ==========================================================================
+class TestInputPipelineIsolation(CatDBTestCase):
+
+    def test_no_global_mouse_hook_is_installed(self):
+        """pynput.mouse.Listener == SetWindowsHookEx(WH_MOUSE_LL)，绝不能再用。"""
+        src = read('server.py')
+        self.assertNotIn('mouse.Listener', src)
+        self.assertNotIn('from pynput import keyboard, mouse', src)
+        self.assertIn('GetAsyncKeyState', src)
+        self.assertIn('_mouse_click_poll', src)
+
+    def test_hook_callback_never_does_blocking_work(self):
+        """钩子回调只允许投递事件；加锁 / 日志 / 广播 / 上屏一律挪到工作线程。"""
+        src = inspect.getsource(srv.setup_hotkey)
+        self.assertIn('_enqueue_input', src)
+        for forbidden in ('reset_synced_text(', 'get_detect_keyboard_enabled(',
+                          'run_coroutine_threadsafe', 'mouse.Listener', 'pyautogui'):
+            self.assertNotIn(forbidden, src,
+                             '钩子线程里出现阻塞操作 %r 会拖慢全系统输入' % forbidden)
+
+    def test_blocking_work_lives_in_worker_thread(self):
+        worker = inspect.getsource(srv._process_input_events)
+        self.assertIn('reset_synced_text()', worker)
+        self.assertIn('get_detect_keyboard_enabled()', worker)
+        self.assertIn('run_coroutine_threadsafe', worker)
+        # 上屏期间 _text_lock 被持有，此时注入的按键不能误判为「电脑介入」
+        self.assertIn('_text_lock.acquire(blocking=False)', worker)
+
+    def test_mouse_polling_is_hook_free_and_edge_triggered(self):
+        poll = inspect.getsource(srv._mouse_click_poll)
+        self.assertIn('GetAsyncKeyState', poll)
+        self.assertIn('down and not prev_down', poll)
+        self.assertNotIn('SetWindowsHookEx', poll)
+        self.assertNotIn('Listener', poll)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

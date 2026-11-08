@@ -1,6 +1,6 @@
 {
   "name": "catdb",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "private": true,
   "description": "豆包喵喵 - 手机浏览器语音输入 → Windows 电脑实时上屏（无原生客户端）",
   "scripts": {

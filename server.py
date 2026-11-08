@@ -69,7 +69,7 @@ try:
 except ImportError:
     webview = None
 
-__version__ = "2.3.0"
+__version__ = "2.3.1"
 
 # 兼容 Windows 打包后控制台默认 GBK 编码，避免输出 emoji 时 UnicodeEncodeError
 try:
@@ -141,8 +141,17 @@ hotkey_alt_lock = threading.Lock()
 # 触控板模式开关（默认开；GUI 开关会持久化到配置）
 touchpad_enabled = True
 
-# pynput 监听器句柄（快捷键/鼠标）。热键变更时先停旧的再重建，避免重复监听
+# pynput 键盘监听器句柄（热键变更时先停旧的再重建，避免重复监听）
 HOTKEY_LISTENERS = []
+
+# 全局输入事件队列：钩子回调只做 O(1) 投递，立即返回。
+# WH_KEYBOARD_LL / WH_MOUSE_LL 挂在 Windows 系统输入链上，回调线程一旦被
+# 锁 / 日志 / 输入注入卡住，全系统输入消息都会被延迟 → 鼠标迟滞 + 拖影。
+# 所有加锁、写日志、广播、上屏操作一律挪到普通工作线程执行。
+INPUT_EVENT_QUEUE = queue.Queue()
+INPUT_WORKER_STARTED = False
+MOUSE_POLL_STARTED = False
+MOUSE_POLL_STOP = threading.Event()
 
 # ============== 配置项 ==============
 # 端口探测范围必须与防火墙放行范围完全一致，否则「已放行但手机仍连不上」
@@ -837,9 +846,81 @@ def reset_synced_text():
         logger.info('🔄 电脑端输入，触发增量同步')
         if main_loop: asyncio.run_coroutine_threadsafe(broadcast_rebase(), main_loop)
 
+def _enqueue_input(kind):
+    """输入钩子回调唯一允许调用的函数：O(1) 投递，绝不阻塞。"""
+    INPUT_EVENT_QUEUE.put(kind)
+
+
+def _process_input_events():
+    """唯一的输入事件消费者（普通工作线程）。
+
+    所有加锁 / 日志 / 广播 / 上屏操作都在这里做，绝不在钩子回调线程里做。
+    """
+    while True:
+        kind = INPUT_EVENT_QUEUE.get()
+        try:
+            if kind == 'clear':
+                if main_loop:
+                    asyncio.run_coroutine_threadsafe(broadcast_clear_with_blur(), main_loop)
+            elif kind == 'rebase':
+                # apply_text_diff 在上屏全程持有 _text_lock；这期间产生的按键/点击
+                # 是 pyautogui 注入的，不能当成「电脑介入」，否则会误触增量同步。
+                if not _text_lock.acquire(blocking=False):
+                    continue
+                _text_lock.release()
+                if get_detect_keyboard_enabled():
+                    reset_synced_text()
+        except Exception as e:
+            logger.debug('输入事件处理异常: %s', e)
+
+
+def _mouse_click_poll():
+    """用 GetAsyncKeyState 轮询鼠标左键，完全不安装 WH_MOUSE_LL 全局钩子。
+
+    旧实现依赖 pynput 的鼠标监听器，它在 Windows 上会挂载系统级低级钩子：
+    每一个系统鼠标消息（高回报率鼠标的每次 MOVE 都算）都要穿过 Python 回调；
+    该线程一旦被锁 / 日志 / 输入注入卡住，Windows 就会延迟整条输入链，
+    表现为鼠标迟滞与长拖影。
+    轮询方案不进入消息链，物理上不可能拖慢系统鼠标。
+    """
+    try:
+        import ctypes
+        get_async = ctypes.windll.user32.GetAsyncKeyState
+    except Exception:
+        return
+    VK_LBUTTON = 0x01
+    prev_down = False
+    while not MOUSE_POLL_STOP.wait(0.025):
+        try:
+            down = bool(get_async(VK_LBUTTON) & 0x8000)
+        except Exception:
+            return
+        if down and not prev_down:
+            _enqueue_input('rebase')   # 只检测按下沿，释放不触发
+        prev_down = down
+
+
+def _ensure_input_workers():
+    """只启动一次；setup_hotkey 反复重建热键时不会重复起线程 / 钩子。"""
+    global INPUT_WORKER_STARTED, MOUSE_POLL_STARTED
+    if not INPUT_WORKER_STARTED:
+        threading.Thread(target=_process_input_events, daemon=True,
+                         name='catdb-input-events').start()
+        INPUT_WORKER_STARTED = True
+    if MOUSE_POLL_STARTED:
+        return
+    MOUSE_POLL_STARTED = True
+    if platform.system() == 'Windows':
+        threading.Thread(target=_mouse_click_poll, daemon=True,
+                          name='catdb-mouse-poll').start()
+        logger.info('🖱️ 鼠标左键监测已启用（轮询，无全局鼠标钩子）')
+    else:
+        # 非 Windows 仅用于开发调试：一律不安装全局鼠标钩子
+        logger.info('🖱️ 非 Windows 平台跳过鼠标左键监测')
+
+
 def setup_hotkey():
-    """启动（或重建）键盘/鼠标监听。旧监听器先停止，支持运行中更换热键"""
-    global main_loop
+    """启动（或重建）键盘监听；鼠标左键监测走无钩子轮询，见 _mouse_click_poll。"""
     for l in list(HOTKEY_LISTENERS):
         try:
             l.stop()
@@ -848,37 +929,29 @@ def setup_hotkey():
     HOTKEY_LISTENERS.clear()
     hotkey = CONFIG.get('hotkey', 'f9').strip().lower()
     IGNORED = {'shift','ctrl','alt','cmd','num_lock','scroll_lock','home','end','page_up','page_down','insert','escape','print_screen','pause','f1','f2','f3','f4','f5','f6','f7','f8','f9','f10','f11','f12'}
+    _ensure_input_workers()
     try:
-        from pynput import keyboard, mouse
+        from pynput import keyboard
 
-        # 键盘监听
+        # 键盘钩子回调里只做「读键名 + 投递事件」：
+        # 不加锁、不打日志、不调度协程、不注入输入、不调用 reset_synced_text。
         def on_press(key):
             try:
                 k = key.char if hasattr(key, 'char') else key.name
                 if not k: return
-                if hotkey and k.lower() == hotkey.lower():
-                    if main_loop: asyncio.run_coroutine_threadsafe(broadcast_clear_with_blur(), main_loop)
-                    return
-                if k.lower() not in IGNORED and get_detect_keyboard_enabled():
-                    reset_synced_text()
-            except: pass
-
-        # 鼠标监听 - 左键点击触发增量模式
-        def on_click(x, y, button, pressed):
-            try:
-                # 只在左键按下时触发，释放时不触发
-                if button == mouse.Button.left and pressed:
-                    if get_detect_keyboard_enabled():
-                        reset_synced_text()
-            except: pass
+                k = k.lower()
+                if hotkey and k == hotkey.lower():
+                    _enqueue_input('clear')
+                elif k not in IGNORED and not typing_in_progress:
+                    # typing_in_progress 期间的按键是程序自己注入的，不算电脑介入
+                    _enqueue_input('rebase')
+            except Exception:
+                pass
 
         kb = keyboard.Listener(on_press=on_press)
-        ms = mouse.Listener(on_click=on_click)
         kb.start()
-        ms.start()
-        HOTKEY_LISTENERS.extend([kb, ms])
+        HOTKEY_LISTENERS.append(kb)
         if hotkey: logger.info('🎹 热键: [%s]', hotkey)
-        logger.info('🖱️ 鼠标左键监测已启用')
     except Exception as e:
         logger.warning('⚠️  热键需安装 pynput: %s', e)
 
